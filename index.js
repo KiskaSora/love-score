@@ -94,8 +94,8 @@ function injectStyles() {
   el.textContent = `
 #ls-widget{
   position:fixed;
-  right:18px;
-  bottom:30%;
+  left:50%;
+  right:auto;
   width:64px;
   height:60px;
   cursor:grab;
@@ -189,34 +189,6 @@ function applyWidgetSize(sz) {
   w.style.width = sz + 'px';
   w.style.height = Math.round(sz * 0.94) + 'px';
 }
-
-function ensureRescueButton() {
-  const c = cfg();
-  if (!c.showRescueButton) return;
-  if (document.getElementById('ls-rescue')) return;
-  const b = document.createElement('div');
-  b.id = 'ls-rescue';
-  b.title = 'Love Score: показать/вернуть сердечко';
-  b.textContent = '❤️';
-  b.addEventListener('click', () => {
-    const w = document.getElementById('ls-widget');
-    if (!w) { createWidget(); return; }
-    // default safe position
-    w.style.right = '18px';
-    w.style.left = 'auto';
-    w.style.bottom = '30%';
-    w.style.top = 'auto';
-    cfg().widgetPos = null;
-    saveSettingsDebounced();
-    toast('info', 'Сердечко возвращено на экран');
-  });
-  document.body.appendChild(b);
-}
-
-function createWidget() {
-  if (document.getElementById('ls-widget')) return;
-  injectStyles();
-  ensureRescueButton();
 
   const d = loveData();
   const c = cfg();
@@ -323,7 +295,7 @@ function settingsPanelHTML() {
   return `<div id="ls-settings-panel" class="extension-settings">
 <div class="inline-drawer">
   <div class="inline-drawer-toggle inline-drawer-header">
-    <b>&#10084;&#65039; Расположение</b>
+    <b>&#10084;&#65039; Love Score</b>
     <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
   </div>
   <div class="inline-drawer-content">
@@ -644,7 +616,6 @@ function bindMainEvents() {
     saveSettingsDebounced();
     const b = document.getElementById('ls-rescue');
     if (b) b.style.display = this.checked ? 'flex' : 'none';
-    if (this.checked) ensureRescueButton();
   });
 }
 
@@ -663,10 +634,6 @@ function init() {
   syncUI();
   updatePromptInjection();
 
-  ensureRescueButton();
-  const rb = document.getElementById('ls-rescue');
-  if (rb) rb.style.display = (c.showRescueButton ?? true) ? 'flex' : 'none';
-
   eventSource.on(event_types.MESSAGE_SENT, () => updatePromptInjection());
   eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
   if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => {
@@ -684,6 +651,5 @@ jQuery(() => {
   catch (e) {
     console.error('[LoveScore] init failed', e);
     toast('error', 'Love Score: ошибка запуска (см. console)');
-    try { injectStyles(); ensureRescueButton(); } catch {}
   }
 });
