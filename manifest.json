@@ -1,0 +1,12 @@
+{
+    "display_name": "Love Score",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "",
+    "author": "you",
+    "version": "1.0.0",
+    "homePage": "",
+    "auto_update": false
+}
