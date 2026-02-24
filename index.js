@@ -137,7 +137,7 @@ function refreshWidget(){
   if(fill){fill.setAttribute('y',(95*(1-ratio)).toFixed(2));fill.setAttribute('height',(95*ratio).toFixed(2));fill.setAttribute('fill',heartColor(d.score,d.maxScore));}
   const main=document.getElementById('ls-score-main');if(main)main.textContent=d.score;
   const den=document.getElementById('ls-score-denom');if(den)den.textContent='/'+d.maxScore;
-  const tip=document.getElementById('ls-status-tip');if(tip)tip.textContent=getActiveInterp()?.description?.trim()||('Расположение: '+d.score+'/'+d.maxScore);
+  const tip=document.getElementById('ls-status-tip');if(tip)tip.textContent=getActiveInterp()?.description?.trim()||('Расположение '+d.score+'/'+d.maxScore);
 }
 function pulseWidget(){const w=document.getElementById('ls-widget');if(!w)return;w.classList.remove('ls-beat');void w.offsetWidth;w.classList.add('ls-beat');}
 
@@ -145,7 +145,7 @@ function settingsPanelHTML(){
   return `<div id="ls-settings-panel" class="extension-settings">
 <div class="inline-drawer">
   <div class="inline-drawer-toggle inline-drawer-header">
-    <b>&#10084;&#65039; Расположение</b>
+    <b>&#10084;&#65039; Love Score</b>
     <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
   </div>
   <div class="inline-drawer-content">
