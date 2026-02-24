@@ -237,7 +237,7 @@ function settingsPanelHTML() {
   return '<div id="ls-settings-panel" class="extension-settings">'
     + '<div class="inline-drawer">'
     + '<div class="inline-drawer-toggle inline-drawer-header">'
-    + '<b>&#10084;&#65039; Расположение</b>'
+    + '<b>&#10084;&#65039; Love Score</b>'
     + '<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>'
     + '</div>'
     + '<div class="inline-drawer-content">'
