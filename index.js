@@ -47,11 +47,7 @@ function loveData() {
 }
 
 function escHtml(s) {
-  return String(s ?? '')
-    .split('&').join('&amp;')
-    .split('<').join('&lt;')
-    .split('>').join('&gt;')
-    .split('"').join('&quot;');
+  return String(s ?? '').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');
 }
 
 function getActiveInterp() {
@@ -76,10 +72,8 @@ function injectStyles() {
   el.textContent = `
 #ls-widget{
   position:fixed;
+  top:100px;
   left:18px;
-  right:auto;
-  bottom:60%;
-  top:auto;
   width:64px;
   height:60px;
   cursor:grab;
@@ -95,7 +89,7 @@ function injectStyles() {
 @keyframes ls-hb{0%{transform:scale(1)}40%{transform:scale(1.32)}70%{transform:scale(.92)}100%{transform:scale(1)}}
 #ls-heart-fill{transition:y .6s ease,height .6s ease,fill .5s ease;}
 #ls-status-tip{
-  position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%);
+  position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
   background:rgba(15,10,20,.95); border:1px solid rgba(255,90,120,.4); border-radius:8px;
   padding:6px 11px; font-size:11px; color:rgba(255,215,225,.9);
   pointer-events:none; opacity:0; white-space:normal; text-align:center;
@@ -150,6 +144,9 @@ function applyWidgetSize(sz) {
   w.style.height = Math.round(sz * 0.94) + 'px';
 }
 
+// Clamp value to [min, max]
+function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
+
 function createWidget() {
   if (document.getElementById('ls-widget')) return;
   injectStyles();
@@ -158,21 +155,32 @@ function createWidget() {
   w.id = 'ls-widget';
   w.innerHTML = buildHeartSVG(d.score, d.maxScore);
   document.body.appendChild(w);
-  applyWidgetSize(c.widgetSize || 64);
-  if (c.widgetPos?.left != null) {
-    w.style.left   = c.widgetPos.left;  w.style.right  = 'auto';
-    w.style.bottom = c.widgetPos.bottom; w.style.top   = 'auto';
+
+  const sz = c.widgetSize || 64;
+  applyWidgetSize(sz);
+
+  // Restore saved position — clamp to current screen so it never goes off-screen
+  if (c.widgetPos?.top != null) {
+    const vW = window.innerWidth, vH = window.innerHeight;
+    const wW = sz, wH = Math.round(sz * 0.94);
+    const st = parseFloat(c.widgetPos.top);
+    const sl = parseFloat(c.widgetPos.left);
+    const ct = isNaN(st) ? 100 : clamp(st, 8, vH - wH - 8);
+    const cl = isNaN(sl) ? 18  : clamp(sl, 8, vW - wW - 8);
+    w.style.top  = ct + 'px'; w.style.bottom = 'auto';
+    w.style.left = cl + 'px'; w.style.right  = 'auto';
   }
+  // If no saved pos: CSS default (top:100px; left:18px) — always on screen
+
   makeDraggable(w);
 }
 
 function makeDraggable(w) {
-  let drag = false, moved = false, ox, oy, sL, sB;
+  let drag = false, moved = false, ox, oy, sT, sL;
   w.addEventListener('pointerdown', (e) => {
     drag = true; moved = false; ox = e.clientX; oy = e.clientY;
     const r = w.getBoundingClientRect();
-    sL = r.left;
-    sB = window.innerHeight - r.bottom;
+    sT = r.top; sL = r.left;
     w.setPointerCapture(e.pointerId);
     w.style.transition = 'none';
     w.style.filter = 'drop-shadow(0 8px 28px rgba(255,60,100,.7))';
@@ -183,10 +191,10 @@ function makeDraggable(w) {
     if (!moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) moved = true;
     if (!moved) return;
     const wW = w.offsetWidth, wH = w.offsetHeight;
-    const nL = Math.max(8, Math.min(window.innerWidth  - wW - 8, sL + dx));
-    const nB = Math.max(8, Math.min(window.innerHeight - wH - 8, sB + dy));
+    const nT = clamp(sT + dy, 8, window.innerHeight - wH - 8);
+    const nL = clamp(sL + dx, 8, window.innerWidth  - wW - 8);
+    w.style.top  = nT + 'px'; w.style.bottom = 'auto';
     w.style.left = nL + 'px'; w.style.right  = 'auto';
-    w.style.bottom = nB + 'px'; w.style.top = 'auto';
   });
   w.addEventListener('pointerup', () => {
     if (!drag) return; drag = false;
@@ -197,7 +205,7 @@ function makeDraggable(w) {
       setTimeout(() => document.getElementById('ls-settings-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
       return;
     }
-    cfg().widgetPos = { left: w.style.left, bottom: w.style.bottom };
+    cfg().widgetPos = { top: w.style.top, left: w.style.left };
     saveSettingsDebounced();
   });
 }
@@ -270,17 +278,13 @@ function renderChanges() {
     const pos = c.delta >= 0, cls = pos ? 'ls-card-pos' : 'ls-card-neg', icon = pos ? '❤️' : '💔';
     const ph = pos ? 'Что заставляет сердце потеплеть...' : 'Что ранит или отталкивает...';
     html += '<div class="ls-card ' + cls + '" data-idx="' + i + '">'
-      + '<div class="ls-heart-box">'
-      + '<span class="ls-heart-icon">' + icon + '</span>'
-      + '<input type="number" class="ls-delta-input ls-num-input" value="' + c.delta + '" data-idx="' + i + '" style="width:52px;font-weight:700;">'
-      + '</div>'
+      + '<div class="ls-heart-box"><span class="ls-heart-icon">' + icon + '</span>'
+      + '<input type="number" class="ls-delta-input ls-num-input" value="' + c.delta + '" data-idx="' + i + '" style="width:52px;font-weight:700;"></div>'
       + '<textarea class="ls-change-desc ls-textarea-field" data-idx="' + i + '" rows="3" placeholder="' + ph + '">' + escHtml(c.description) + '</textarea>'
-      + '<button class="ls-del-change menu_button ls-del-btn" data-idx="' + i + '" title="Удалить">&#10005;</button>'
-      + '</div>';
+      + '<button class="ls-del-change menu_button ls-del-btn" data-idx="' + i + '">&#10005;</button></div>';
   });
   html += '<button id="ls-add-change" class="menu_button ls-add-btn">❤️ Добавить правило</button>';
-  ct.innerHTML = html;
-  bindChangesEv();
+  ct.innerHTML = html; bindChangesEv();
 }
 
 function renderInterps() {
@@ -291,16 +295,14 @@ function renderInterps() {
     const act = d.score >= ip.min && d.score <= ip.max;
     const st = act ? 'border-color:rgba(255,80,110,.7);background:rgba(255,80,110,.07);' : '';
     html += '<div class="ls-card ls-card-neu" data-idx="' + i + '" style="' + st + '">'
-      + '<div class="ls-range-box">'
-      + '<span>' + (act ? '&#9658; сейчас' : 'диапазон') + '</span>'
+      + '<div class="ls-range-box"><span>' + (act ? '&#9658; сейчас' : 'диапазон') + '</span>'
       + '<div class="ls-range-inner">'
       + '<input type="number" class="ls-interp-min ls-num-input" value="' + ip.min + '" data-idx="' + i + '" style="width:44px;" min="0">'
       + '<span style="opacity:.45;">&#8211;</span>'
       + '<input type="number" class="ls-interp-max ls-num-input" value="' + ip.max + '" data-idx="' + i + '" style="width:44px;" min="0">'
       + '</div></div>'
-      + '<textarea class="ls-interp-desc ls-textarea-field" data-idx="' + i + '" rows="3" placeholder="Как персонаж ведёт себя при этом уровне...">' + escHtml(ip.description) + '</textarea>'
-      + '<button class="ls-del-interp menu_button ls-del-btn" data-idx="' + i + '" title="Удалить">&#10005;</button>'
-      + '</div>';
+      + '<textarea class="ls-interp-desc ls-textarea-field" data-idx="' + i + '" rows="3" placeholder="Как персонаж ведёт себя...">' + escHtml(ip.description) + '</textarea>'
+      + '<button class="ls-del-interp menu_button ls-del-btn" data-idx="' + i + '">&#10005;</button></div>';
   });
   html += '<button id="ls-add-interp" class="menu_button ls-add-btn">+ Добавить диапазон</button>';
   ct.innerHTML = html;
@@ -334,9 +336,7 @@ function buildPrompt() {
     p += '\n\nCurrent love score: ' + d.score + '/' + d.maxScore + '.';
     p += '\n\nCURRENT BEHAVIOR (score ' + d.score + '):\n' + active.description.trim();
     p += '\n\nPortray the character strictly according to this description.';
-  } else {
-    p += '\n\nCurrent love score: ' + d.score + '/' + d.maxScore + '.';
-  }
+  } else { p += '\n\nCurrent love score: ' + d.score + '/' + d.maxScore + '.'; }
   if (changes.length) { p += '\n\nLove Score Changes:'; changes.forEach(x => { p += '\n' + (x.delta >= 0 ? '+' : '') + x.delta + ': ' + x.description.trim(); }); }
   if (interps.length)  { p += '\n\nLove Scale Interpretations:'; interps.forEach(x => { p += '\nLove ' + x.min + '-' + x.max + ': ' + x.description.trim() + ((d.score >= x.min && d.score <= x.max) ? ' <- NOW' : ''); }); }
   if (c.gradualProgression) p += '\n\nGradual Progression: change score incrementally, +1/-1 per response is normal.';
@@ -392,7 +392,7 @@ function bindMainEvents() {
   $(document).off('click', '#ls-reset-pos').on('click', '#ls-reset-pos', () => {
     cfg().widgetPos = null; saveSettingsDebounced();
     const w = document.getElementById('ls-widget');
-    if (w) { w.style.left = '18px'; w.style.right = 'auto'; w.style.bottom = '30%'; w.style.top = 'auto'; }
+    if (w) { w.style.top = '100px'; w.style.bottom = 'auto'; w.style.left = '18px'; w.style.right = 'auto'; }
     toast('info', 'Позиция сброшена');
   });
 }
@@ -402,14 +402,16 @@ jQuery(() => {
     if (!extension_settings[EXT_NAME]) extension_settings[EXT_NAME] = structuredClone(defaultSettings);
     const c = cfg();
     for (const [k, v] of Object.entries(defaultSettings)) if (c[k] === undefined) c[k] = structuredClone(v);
-    // clear any bad saved positions
-    if (c.widgetPos && (isNaN(parseFloat(c.widgetPos.left)) || parseFloat(c.widgetPos.left) > window.innerWidth)) c.widgetPos = null;
+    // Always force isEnabled true on first load to avoid invisible widget from bad saved state
+    if (c.isEnabled === false && !c._wasManuallyDisabled) c.isEnabled = true;
+    // Drop old-format saved positions (any that used bottom/right)
+    if (c.widgetPos && c.widgetPos.top == null) c.widgetPos = null;
     $('#extensions_settings').append(settingsPanelHTML());
     createWidget(); bindMainEvents(); syncUI(); updatePromptInjection();
     eventSource.on(event_types.MESSAGE_SENT, () => updatePromptInjection());
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => { cfg().lastCheckedMessageId = null; syncUI(); updatePromptInjection(); });
-    console.log('[LoveScore] v11 ready');
+    console.log('[LoveScore] v12 ready');
   } catch(e) {
     console.error('[LoveScore] init failed', e);
     toast('error', 'Love Score: ошибка запуска');
