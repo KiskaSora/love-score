@@ -76,7 +76,7 @@ function injectStyles() {
   el.textContent = `
 #ls-widget{
   position:fixed;
-  left:380px;
+  left:510px;
   right:auto;
   bottom:30%;
   top:auto;
