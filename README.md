@@ -1,4 +1,4 @@
-# # ❤️ Love Score
+## ❤️ Love Score
 love score for you and you SillyTavern ♥
 #Features
 **Floating heart widget** — draggable, resizable, fills up as the score grows
