@@ -18,7 +18,7 @@ love score for you and you SillyTavern ♥
 1. Open SillyTavern → **Extensions** → **Install extension**
 2. Paste the repository URL:
    ```
-   (https://github.com/KiskaSora/love-score.git)
+ https://github.com/KiskaSora/love-score
    ```
 3. Click **Install** and reload the page
 4. The ❤️ Love Score panel will appear in the Extensions sidebar
