@@ -487,7 +487,7 @@ function settingsPanelHTML() {
     + '<label class="ls-api-label">Особые пожелания <span style="opacity:.35;font-weight:400;">(необязательно)</span></label>'
     + '<textarea id="ls-gen-notes" class="ls-api-field" rows="3" placeholder="Например: не добавляй события про брак, сделай персонажа застенчивее, сосредоточься на физическом контакте..." style="resize:vertical;min-height:56px;font-family:inherit;font-size:12px;line-height:1.5;">' + curNotes + '</textarea>'
     + '<label class="ls-api-label">Endpoint</label>'
-    + '<input id="ls-gen-endpoint" class="ls-api-field" type="text" placeholder="https://api.example.com/v1" value="' + curEndpoint + '">'
+    + '<input id="ls-gen-endpoint" class="ls-api-field" type="text" placeholder="https://api.example.com/" value="' + curEndpoint + '">'
     + '<label class="ls-api-label">API Key</label>'
     + '<input id="ls-gen-apikey" class="ls-api-field" type="password" placeholder="sk-..." value="' + curKey + '">'
     + '<label class="ls-api-label">Модель</label>'
