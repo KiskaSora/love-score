@@ -509,7 +509,7 @@ function settingsPanelHTML() {
     + '<div class="ls-hint">Активный диапазон влияет на инструкцию персонажу.</div>'
     + '<div id="ls-interp-container"></div>'
     + '<div class="ls-section-title">Романтические события</div>'
-    + '<div class="ls-hint">При достижении порога персонаж обязан инициировать событие. Отметь когда произошло.</div>'
+    + '<div class="ls-hint">При достижении порога персонаж обязан инициировать событие. Отметиться когда произойдет.</div>'
     + '<div class="ls-milestone-reset-row"><button id="ls-milestone-reset-all" class="menu_button">Сбросить все</button></div>'
     + '<div id="ls-milestones-container"></div>'
     + '<div class="ls-row" style="margin-top:10px;"><label class="checkbox_label" for="ls-gradual"><input type="checkbox" id="ls-gradual"><span>Медленное изменение (+1/-1 за ответ)</span></label></div>'
