@@ -11,6 +11,7 @@ const defaultSettings = {
   lastCheckedMessageId: null, chatLoveData: {},
   genEndpoint: '', genApiKey: '', genModel: '', genLang: 'ru', genUserNotes: '',
   genScope: { changes: true, positiveRanges: true, negativeRanges: true, milestones: true, suggestedMax: true },
+  chatAnalysisMsgCount: 20,
   presets: []
 };
 
@@ -331,6 +332,11 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 #ls-gen-btn{width:100%;margin-top:4px;}
 #ls-gen-status{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:15px;line-height:1.4;}
 #ls-score-log{margin-top:4px;}
+#ls-analyze-result{margin-top:8px;padding:10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.12));display:none;}
+.ls-analyze-score{font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#eee);margin-bottom:6px;}
+.ls-analyze-text{font-size:12px;line-height:1.55;color:var(--SmartThemeBodyColor,#ccc);opacity:.85;margin-bottom:5px;}
+.ls-analyze-reason{font-size:11px;line-height:1.4;color:var(--SmartThemeBodyColor,#aaa);opacity:.55;font-style:italic;}
+
 .ls-log-clear{padding:2px 8px!important;min-width:unset!important;font-size:10px!important;opacity:.4;}
 .ls-log-clear:hover{opacity:.8;}
 `;
@@ -528,7 +534,7 @@ async function onRefreshModels() {
   } catch(e){ toast('error','Ошибка: '+e.message); } finally { btn.classList.remove('ls-loading'); }
 }
 
-async function generateLoveScoreWithAI(charCard, scope) {
+async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
   const c=cfg(),base=getBaseUrl(),apiKey=(c.genApiKey||'').trim(),model=(c.genModel||'').trim()||'gpt-4o';
   if(!base)   throw new Error('Укажи Endpoint');
   if(!apiKey) throw new Error('Укажи API Key');
@@ -568,10 +574,20 @@ async function generateLoveScoreWithAI(charCard, scope) {
   const omitNote = (!wantChanges||!wantPosRange||!wantNegRange||!wantMs)
     ? 'NOTE: Only generate the fields listed in the schema. Omit everything else.' : '';
 
+  const hasHistory=chatHistory.trim().length>0;
   const userMsg=[
-    'Analyze the character card and generate love score rules.',
+    hasHistory
+      ? 'Analyze the character card AND the real chat history to generate accurate love score rules.'
+      : 'Analyze the character card and generate love score rules.',
     'Score range: '+MIN_SCORE+' to '+maxScore+'. Negative = hostility/hatred. Positive = love/affection.',
     '','CHARACTER CARD:',charCard,'',
+    ...(hasHistory?[
+      'RECENT CHAT HISTORY (use this to ground all descriptions in the real dynamic):',
+      chatHistory,''
+    ]:[]),
+    ...(hasHistory?[
+      'IMPORTANT: Base all change descriptions, ranges and milestones on what actually happens in this chat. Use character names and real events from the history.'
+    ]:[]),
     omitNote,
     'Reply with STRICTLY valid JSON matching this schema exactly:',
     ...schemaLines,'',
@@ -592,13 +608,115 @@ async function generateLoveScoreWithAI(charCard, scope) {
 
 function parseAIResponse(raw) {
   try {
-    const cleaned=raw.replace(/^```[\w]*\n?/gm,'').replace(/```$/gm,'').trim();
+    let cleaned=raw.replace(/^```[\\w]*\\n?/gm,'').replace(/```$/gm,'').trim();
+    const _js=cleaned.indexOf('{'),_je=cleaned.lastIndexOf('}');
+    if(_js!==-1&&_je>_js) cleaned=cleaned.slice(_js,_je+1);
     const p=JSON.parse(cleaned);
     const changes   =(p.changes   ||[]).filter(x=>typeof x.delta==='number'&&x.text).map(x=>({delta:x.delta,description:String(x.text).trim()}));
     const ranges    =(p.ranges    ||[]).filter(x=>typeof x.min==='number'&&typeof x.max==='number'&&x.text).map(x=>({min:x.min,max:x.max,description:String(x.text).trim()}));
     const milestones=(p.milestones||[]).filter(x=>typeof x.threshold==='number'&&x.text).sort((a,b)=>a.threshold-b.threshold).map(x=>({threshold:x.threshold,description:String(x.text).trim(),done:false}));
     return {changes,ranges,milestones,suggestedMax:p.suggestedMax||null,ok:true};
   } catch { return {changes:[],ranges:[],milestones:[],suggestedMax:null,ok:false}; }
+}
+
+// ─── Чат-история ─────────────────────────────────────────────────────────────
+function getChatHistory(n) {
+  try {
+    const ctx=SillyTavern?.getContext?.();
+    if(!ctx?.chat?.length) return '';
+    const msgs=ctx.chat.slice(-Math.max(1,n));
+    const charName=getCurrentCharacterCard()?.name||'Персонаж';
+    return msgs.map(m=>{
+      const who=m.is_user?'Игрок':charName;
+      return who+': '+(m.mes||'').trim().slice(0,500);
+    }).join('\n\n');
+  } catch{return '';}
+}
+
+// ─── AI-анализ отношений по чату ─────────────────────────────────────────────
+async function analyzeWithAI(charCard,chatHistory) {
+  const c=cfg(),base=getBaseUrl(),apiKey=(c.genApiKey||'').trim(),model=(c.genModel||'').trim()||'gpt-4o';
+  if(!base) throw new Error('Не указан Endpoint');
+  if(!apiKey) throw new Error('Не указан API Key');
+  const d=loveData(),lang=c.genLang==='ru';
+  const systemMsg='You are an expert analyst for a text-based RPG relationship tracker. Reply ONLY with valid JSON, no markdown.';
+  const userMsg=[
+    'Analyze the relationship between the player and the character based on the chat history.',
+    'Current love score: '+d.score+' (range: '+MIN_SCORE+' to '+d.maxScore+'). Negative=hostility, positive=affection.',
+    '','CHARACTER CARD:',charCard,
+    '','RECENT CHAT HISTORY:',chatHistory,'',
+    'Reply in '+(lang?'Russian':'English')+' with STRICTLY valid JSON:',
+    '{"suggestedScore":<integer>,"analysis":"<2-3 sentences>","reasoning":"<why this score>"}',
+    'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'. Be accurate.',
+  ].join('\n');
+  const resp=await fetch(base+'/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+    body:JSON.stringify({model,messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}],temperature:0.5,max_tokens:600})
+  });
+  if(!resp.ok){const t=await resp.text();throw new Error('HTTP '+resp.status+': '+t.slice(0,200));}
+  const result=await resp.json();
+  const text=result?.choices?.[0]?.message?.content??'';
+  if(!text.trim()) throw new Error('Пустой ответ от AI');
+  return text;
+}
+
+function parseAnalyzeResponse(raw) {
+  try {
+    const cleaned=raw.replace(/```json\n?/gm,'').replace(/```\n?/gm,'').trim();
+    const p=JSON.parse(cleaned);
+    return {suggestedScore:typeof p.suggestedScore==='number'?Math.round(p.suggestedScore):null,analysis:String(p.analysis||''),reasoning:String(p.reasoning||''),ok:true};
+  } catch{return {suggestedScore:null,analysis:'',reasoning:'',ok:false};}
+}
+
+async function onAnalyzeClick() {
+  const btn=document.getElementById('ls-analyze-btn');
+  const status=document.getElementById('ls-analyze-status');
+  const result=document.getElementById('ls-analyze-result');
+  if(!btn||!status) return;
+  btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Анализирую...';
+  status.textContent='Запрос к API...';
+  if(result) result.style.display='none';
+  try {
+    const char=getCurrentCharacterCard();
+    if(!char){status.textContent='Нет персонажа.';return;}
+    const cardText=buildCharacterCardText(char);
+    if(!cardText.trim()){status.textContent='Пустая карта персонажа.';return;}
+    const n=parseInt(cfg().chatAnalysisMsgCount)||20;
+    const history=getChatHistory(n);
+    if(!history.trim()){status.textContent='Нет сообщений в чате.';return;}
+    status.textContent='Анализирую '+n+' сообщений...';
+    const raw=await analyzeWithAI(cardText,history);
+    const parsed=parseAnalyzeResponse(raw);
+    if(!parsed.ok||parsed.suggestedScore===null){status.textContent=raw.slice(0,150);return;}
+    status.textContent='';
+    if(result){
+      const d=loveData();
+      const diff=parsed.suggestedScore-d.score;
+      const diffStr=diff>0?'+'+diff:String(diff);
+      result.style.display='block';
+      result.innerHTML=
+        '<div class="ls-analyze-score">Рекомендуемый счёт: <strong>'+parsed.suggestedScore+'</strong>'
+        +'<span style="opacity:.5;font-size:11px;margin-left:6px">(сейчас '+d.score+', '+(diff!==0?diffStr:'без изменений')+')</span></div>'
+        +(parsed.analysis?'<div class="ls-analyze-text">'+escHtml(parsed.analysis)+'</div>':'')
+        +(parsed.reasoning?'<div class="ls-analyze-reason">'+escHtml(parsed.reasoning)+'</div>':'')
+        +'<button id="ls-analyze-apply" class="menu_button" style="margin-top:8px;width:100%"><i class="fa-solid fa-check"></i> Применить счёт '+parsed.suggestedScore+'</button>';
+      document.getElementById('ls-analyze-apply')?.addEventListener('click',()=>{
+        const d=loveData(),prev=d.score;
+        d.score=Math.max(MIN_SCORE,Math.min(parsed.suggestedScore,d.maxScore));
+        const delta=d.score-prev;
+        if(delta!==0) addToLog(d,delta,'AI анализ чата');
+        saveSettingsDebounced();updatePromptInjection();syncUI();pulseWidget();renderScoreLog();
+        toast('success','Счёт установлен: '+d.score);
+      });
+    }
+    toast('success','Анализ готов → '+parsed.suggestedScore);
+  } catch(e){
+    status.textContent=e.message;
+    toast('error',e.message);
+  } finally {
+    btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-chart-line"></i> Анализировать чат';
+  }
 }
 
 async function onGenerateClick() {
@@ -617,7 +735,11 @@ async function onGenerateClick() {
     const cardText=buildCharacterCardText(char);
     if(!cardText.trim()){status.textContent='Карточка персонажа пустая.';return;}
     status.textContent='Генерирую для: '+(char.name||'персонаж')+'...';
-    const raw=await generateLoveScoreWithAI(cardText,scope),parsed=parseAIResponse(raw);
+    const _genMsgN=parseInt(cfg().chatAnalysisMsgCount)||0;
+    const _genHistory=_genMsgN>0?getChatHistory(_genMsgN):'';
+    if(_genHistory) status.textContent='Читаю '+_genMsgN+' сообщ. + карту персонажа...';
+    else status.textContent='Читаю карту персонажа (без истории чата)...';
+    const raw=await generateLoveScoreWithAI(cardText,scope,_genHistory),parsed=parseAIResponse(raw);
     if(!parsed.ok){status.textContent='Ошибка разбора: '+raw.slice(0,120);return;}
     const d=loveData();
     if(parsed.changes.length>0   &&scope.changes)                     d.scoreChanges=parsed.changes;
@@ -772,8 +894,20 @@ function settingsPanelHTML() {
     +'<div style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;margin:8px 0 0;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Персонаж</div>'
     +'<div id="ls-char-preview"><img id="ls-char-avatar" class="ls-avatar-hidden" src="" alt=""><span id="ls-char-avatar-name" style="font-size:12px;opacity:.6;"></span></div>'
 
+    +'<div class="ls-row" style="margin-bottom:6px;gap:6px;">'
+    +'<span style="font-size:12px;opacity:.6;white-space:nowrap">Сообщений из чата:&nbsp;</span>'
+    +'<input type="number" id="ls-gen-msg-count" class="ls-num-input" min="0" max="200" style="width:60px" title="0 = не читать" value="'+(c.chatAnalysisMsgCount||20)+'">'
+    +'<span style="font-size:10px;opacity:.35;margin-left:2px">0 = без истории</span>'
+    +'</div>'
     +'<button id="ls-gen-btn" class="menu_button">Сгенерировать</button>'
     +'<div id="ls-gen-status"></div>'
+    +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.08));">'
+    +'<div class="ls-section-title">Анализ чата</div>'
+    +'<div class="ls-hint">ИИ читает историю чата + карту персонажа и предлагает счёт отношений</div>'
+    +'<button id="ls-analyze-btn" class="menu_button" style="width:100%"><i class="fa-solid fa-chart-line"></i> Анализировать чат</button>'
+    +'<div id="ls-analyze-status" style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:14px;"></div>'
+    +'<div id="ls-analyze-result"></div>'
+    +'</div>'
     +'</div>'
 
     // Правила
@@ -889,7 +1023,7 @@ function onMessageReceived() {
     const sm=text.match(/<!--\s*\[LOVE_SCORE:(-?\d+)\]\s*-->/i);
     if(sm){
       const d=loveData(),c=cfg(); let nv=parseInt(sm[1],10),ov=d.score;
-      if(c.gradualProgression){const _allowed=new Set(d.scoreChanges.map(x=>x.delta));if(!_allowed.has(nv-ov)){const md=2;nv=Math.max(ov-md,Math.min(ov+md,nv));}}
+      if(c.gradualProgression){const md=2;nv=Math.max(ov-md,Math.min(ov+md,nv));}
       d.score=Math.max(MIN_SCORE,Math.min(nv,d.maxScore));
       const delta=d.score-ov;
       if(delta!==0){
@@ -966,6 +1100,8 @@ function bindMainEvents() {
   });
   $(document).off('click','#ls-refresh-models').on('click','#ls-refresh-models',onRefreshModels);
   $(document).off('click','#ls-gen-btn').on('click','#ls-gen-btn',onGenerateClick);
+  $(document).off('change','#ls-gen-msg-count').on('change','#ls-gen-msg-count',function(){cfg().chatAnalysisMsgCount=parseInt(this.value)||0;saveSettingsDebounced();});
+  $(document).off('click','#ls-analyze-btn').on('click','#ls-analyze-btn',onAnalyzeClick);
   
   // Пресеты
   $(document).off('click','#ls-preset-save').on('click','#ls-preset-save',()=>{
