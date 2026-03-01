@@ -1114,6 +1114,10 @@ function onMessageReceived() {
 }
 function syncUI() {
   const c=cfg(),d=loveData(),el=id=>document.getElementById(id);
+  // Сброс результата анализа при смене чата/перса
+  const _ar=el('ls-analyze-result');if(_ar){_ar.style.display='none';_ar.innerHTML='';}
+  const _as=el('ls-analyze-status');if(_as) _as.textContent='';
+  const _ti=el('ls-type-info');if(_ti){_ti.style.display='none';_ti.dataset.showing='';}
   const cb=el('ls-enabled');if(cb) cb.checked=c.isEnabled;
   const v=el('ls-val');if(v) v.value=d.score;
   const m=el('ls-max');if(m) m.value=d.maxScore;
