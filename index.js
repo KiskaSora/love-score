@@ -15,8 +15,30 @@ const defaultSettings = {
   presets: []
 };
 
+
+// ─── Цветовые хелперы ────────────────────────────────────────────────────────
+function _h2r(hex){
+  const h=hex.replace('#','');
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
+}
+function _lerpHex(a,b,t){
+  const [r1,g1,b1]=_h2r(a),[r2,g2,b2]=_h2r(b);
+  const r=v=>Math.round(r1+t*(r2-r1)).toString(16).padStart(2,'0');
+  return '#'+[r1+t*(r2-r1),g1+t*(g2-g1),b1+t*(b2-b1)].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+// ─── Типы отношений ───────────────────────────────────────────────────────────
+const RELATION_TYPES = {
+  neutral:    { label: 'Нейтрально',  color: '#d0d0d0', deep: '#888888', desc: 'Тип не определён. Отношения только начинаются.' },
+  romance:    { label: 'Романтика',   color: '#ff2d55', deep: '#c0002a', desc: 'Влюблённость, страсть, нежность. Особая привязанность.' },
+  friendship: { label: 'Дружба',      color: '#ff9d2e', deep: '#b35000', desc: 'Тепло, забота и доверие без романтики.' },
+  family:     { label: 'Семья',       color: '#f0c000', deep: '#8a6c00', desc: 'Глубокая привязанность как к близкому человеку.' },
+  platonic:   { label: 'Платоника',   color: '#00c49a', deep: '#006655', desc: 'Духовная близость и взаимопонимание без физики.' },
+  rival:      { label: 'Соперник',    color: '#2979ff', deep: '#003a99', desc: 'Уважение через конкуренцию. Напряжённая динамика.' },
+  obsession:  { label: 'Одержимость', color: '#a855f7', deep: '#5c00b0', desc: 'Всепоглощающая фиксация. Тёмная, болезненная привязанность.' },
+  hostile:    { label: 'Ненависть',   color: '#2e8b00', deep: '#050f00', desc: 'Открытая ненависть и враждебность. Перевёрнутое сердце — символ ненависти.' },
+};
 const mkLoveData = () => ({
-  score: 0, maxScore: 100, scoreLog: [],
+  score: 0, maxScore: 100, relationType: 'neutral', scoreLog: [],
   scoreChanges: [
     { delta: 1, description: '' }, { delta: 2,   description: '' },
     { delta: -1, description: '' }, { delta: -2,  description: '' },
@@ -90,36 +112,37 @@ function getPendingMilestones() {
   return (d.milestones || []).filter(m => !m.done && d.score >= m.threshold);
 }
 
-function heartColor(score, max) {
+function heartColor(score, max, rt='neutral') {
+  const _t=RELATION_TYPES[rt]||RELATION_TYPES.neutral;
+  const r=Math.max(0,Math.min(1,Math.abs(score)/(score>=0?max:100)));
+  if (r===0) return '#ffffff';
   if (score >= 0) {
-    const r = score / max;
-    if (r >= 0.85) return '#e8003d';
-    if (r >= 0.65) return '#ff2d55';
-    if (r >= 0.45) return '#ff6b8a';
-    if (r >= 0.25) return '#ff9eb5';
-    if (r > 0)     return '#ffc8d5';
-    return 'transparent';
+    if (r<=0.5) return _lerpHex('#ffffff',_t.color,r*2);
+    return _lerpHex(_t.color,_t.deep,(r-0.5)*2);
   } else {
-    const r = Math.abs(score) / 100;
-    if (r >= 0.90) return '#050f00';
-    if (r >= 0.75) return '#0d2200';
-    if (r >= 0.55) return '#1a4a00';
-    if (r >= 0.35) return '#2e8b00';
-    if (r >= 0.15) return '#4ec900';
-    return '#7fff00';
+    const negPeak=(rt==='hostile')?'#0a8c3a':'#4ec900';
+    const negDeep=(rt==='hostile')?'#041a0a':'#050f00';
+    if (r<=0.5) return _lerpHex('#ffffff',negPeak,r*2);
+    return _lerpHex(negPeak,negDeep,(r-0.5)*2);
   }
 }
 
-function heartStroke(score) {
-  if (score >= 0) return 'rgba(255,90,120,.45)';
-  const r = Math.abs(score) / 100;
-  if (r >= 0.75) return 'rgba(5,25,0,.95)';
-  if (r >= 0.40) return 'rgba(20,90,0,.85)';
+function heartStroke(score, rt='neutral') {
+  if (score >= 0) {
+    const r=Math.max(0,Math.min(1,score/(loveData().maxScore||100)));
+    if (r<0.15) return 'rgba(200,200,200,.35)';
+    return (RELATION_TYPES[rt]||RELATION_TYPES.romance).color.replace('#','rgba(')
+      .replace(/(..)(..)(..)$/,(_,r,g,b)=>`rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)},.5)`);
+  }
+  const r=Math.abs(score)/100;
+  if (r>=0.75) return 'rgba(5,25,0,.95)';
+  if (r>=0.40) return 'rgba(20,90,0,.85)';
   return 'rgba(80,200,0,.6)';
 }
 
 function addToLog(d, delta, reason) {
   if (!d.scoreLog) d.scoreLog = [];
+  if (!d.relationType) d.relationType = 'neutral';
   const sign = delta >= 0 ? '+' : '';
   d.scoreLog.unshift({ delta, sign: sign + delta, reason: reason || '' });
   if (d.scoreLog.length > 10) d.scoreLog.length = 10;
@@ -332,6 +355,8 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 #ls-gen-btn{width:100%;margin-top:4px;}
 #ls-gen-status{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:15px;line-height:1.4;}
 #ls-score-log{margin-top:4px;}
+.ls-rel-type-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:4px 0;flex-wrap:nowrap;}.ls-rel-type-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;cursor:pointer;opacity:.22;transition:opacity .15s,filter .15s;user-select:none;flex-shrink:0;}.ls-rel-type-btn:hover{opacity:.6;}.ls-rel-type-btn.ls-rt-active{opacity:1;filter:drop-shadow(0 2px 8px currentColor);}#ls-type-info{display:none;font-size:11px;line-height:1.55;padding:7px 10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.04));border:1px solid var(--border-color,rgba(255,255,255,.1));color:var(--SmartThemeBodyColor,#ccc);margin-bottom:6px;}.ls-rt-neutral{color:#c0c0c0;}.ls-rt-romance{color:#ff2d55;}.ls-rt-friendship{color:#ff9d2e;}.ls-rt-family{color:#f0c000;}.ls-rt-platonic{color:#00c49a;}.ls-rt-rival{color:#2979ff;}.ls-rt-obsession{color:#a855f7;}.ls-rt-hostile{color:#2e8b00;}.ls-rel-type-label{font-size:11px;opacity:.45;color:var(--SmartThemeBodyColor,#aaa);margin-left:4px;min-width:70px;}
+.ls-analyze-reltype{display:flex;align-items:center;padding:6px 0 8px 0;margin-bottom:4px;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));}
 #ls-analyze-result{margin-top:8px;padding:10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.12));display:none;}
 .ls-analyze-score{font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#eee);margin-bottom:6px;}
 .ls-analyze-text{font-size:12px;line-height:1.55;color:var(--SmartThemeBodyColor,#ccc);opacity:.85;margin-bottom:5px;}
@@ -343,10 +368,10 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
   document.head.appendChild(el);
 }
 
-function buildHeartSVG(score, max) {
+function buildHeartSVG(score, max, rt='neutral') {
   const isNeg = score < 0;
   const P = 'M50,85 C50,85 8,58 8,32 C8,16 20,6 34,6 C43,6 49,11 50,16 C51,11 57,6 66,6 C80,6 92,16 92,32 C92,58 50,85 50,85 Z';
-  const col = heartColor(score, max), stroke = heartStroke(score);
+  const col = heartColor(score, max, rt), stroke = heartStroke(score, rt);
   let fillY, fillH, tr = '';
   if (!isNeg) {
     const r = Math.max(0, Math.min(1, score / max));
@@ -382,7 +407,7 @@ function createWidget() {
   injectStyles();
   const d = loveData(), c = cfg();
   const w = document.createElement('div'); w.id = 'ls-widget';
-  w.innerHTML = buildHeartSVG(d.score, d.maxScore);
+  w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'romance');
   document.body.appendChild(w);
   const sz = c.widgetSize || 64; applyWidgetSize(sz); setWidgetSign(d.score < 0);
   if (c.widgetPos?.top != null) {
@@ -435,15 +460,15 @@ function refreshWidget() {
     if (!isNeg) { const r = Math.max(0,Math.min(1,d.score/d.maxScore)); fillY=(95*(1-r)).toFixed(2); fillH=(95*r).toFixed(2); }
     else { const r=Math.max(0,Math.min(1,Math.abs(d.score)/100)); fillY='0'; fillH=(95*r).toFixed(2); }
     fill.setAttribute('y', fillY); fill.setAttribute('height', fillH);
-    fill.setAttribute('fill', heartColor(d.score, d.maxScore));
+    const _rt=d.relationType||'romance'; fill.setAttribute('fill', heartColor(d.score, d.maxScore, _rt));
     main.textContent = String(d.score); main.setAttribute('font-size', Math.abs(d.score)>=100?'13':'17');
     denom.textContent = '/' + d.maxScore;
     // Пересборка SVG если знак изменился
     const path = w.querySelector('path');
     const isRotated = path?.getAttribute('transform')?.includes('rotate') ?? false;
-    if ((isNeg && !isRotated) || (!isNeg && isRotated)) w.innerHTML = buildHeartSVG(d.score, d.maxScore);
+    if ((isNeg && !isRotated) || (!isNeg && isRotated)) w.innerHTML = buildHeartSVG(d.score, d.maxScore, _rt);
   } else {
-    w.innerHTML = buildHeartSVG(d.score, d.maxScore);
+    w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'romance');
   }
   const tip = document.getElementById('ls-status-tip');
   if (tip) tip.textContent = getActiveInterp()?.description?.trim() || (d.score + ' / ' + d.maxScore);
@@ -646,8 +671,8 @@ async function analyzeWithAI(charCard,chatHistory) {
     '','CHARACTER CARD:',charCard,
     '','RECENT CHAT HISTORY:',chatHistory,'',
     'Reply in '+(lang?'Russian':'English')+' with STRICTLY valid JSON:',
-    '{"suggestedScore":<integer>,"analysis":"<2-3 sentences>","reasoning":"<why this score>"}',
-    'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'. Be accurate.',
+    '{"suggestedScore":<integer>,"relationType":"<one of: romance|friendship|family|obsession|rival|platonic>","analysis":"<2-3 sentences>","reasoning":"<why this score>"}',
+    'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'. relationType MUST be one of the listed values. Be accurate.',
   ].join('\n');
   const resp=await fetch(base+'/v1/chat/completions',{
     method:'POST',
@@ -665,7 +690,9 @@ function parseAnalyzeResponse(raw) {
   try {
     const cleaned=raw.replace(/```json\n?/gm,'').replace(/```\n?/gm,'').trim();
     const p=JSON.parse(cleaned);
-    return {suggestedScore:typeof p.suggestedScore==='number'?Math.round(p.suggestedScore):null,analysis:String(p.analysis||''),reasoning:String(p.reasoning||''),ok:true};
+    const validRT=Object.keys(RELATION_TYPES);
+    const detectedRT=validRT.includes(p.relationType)?p.relationType:null;
+    return {suggestedScore:typeof p.suggestedScore==='number'?Math.round(p.suggestedScore):null,relationType:detectedRT,analysis:String(p.analysis||''),reasoning:String(p.reasoning||''),ok:true};
   } catch{return {suggestedScore:null,analysis:'',reasoning:'',ok:false};}
 }
 
@@ -695,12 +722,23 @@ async function onAnalyzeClick() {
       const diff=parsed.suggestedScore-d.score;
       const diffStr=diff>0?'+'+diff:String(diff);
       result.style.display='block';
+      const _detRT=parsed.relationType,_rtInfo=_detRT?RELATION_TYPES[_detRT]:null;
       result.innerHTML=
         '<div class="ls-analyze-score">Рекомендуемый счёт: <strong>'+parsed.suggestedScore+'</strong>'
         +'<span style="opacity:.5;font-size:11px;margin-left:6px">(сейчас '+d.score+', '+(diff!==0?diffStr:'без изменений')+')</span></div>'
+        +(_rtInfo?'<div class="ls-analyze-reltype">'
+          +'<span style="color:'+_rtInfo.color+';font-size:20px;vertical-align:middle;'+ (_detRT==='hostile'?'display:inline-block;transform:rotate(180deg) scaleX(1.15) scaleY(0.88);':'')+'">&#10084;</span>'
+          +'<span style="font-size:12px;margin-left:6px;opacity:.8;">'+escHtml(_rtInfo.label)+'</span>'
+          +'<button class="menu_button ls-rt-confirm-btn" data-rt="'+_detRT+'" style="margin-left:8px;padding:2px 8px;font-size:11px;">Применить тип</button>'
+          +'</div>':'')
         +(parsed.analysis?'<div class="ls-analyze-text">'+escHtml(parsed.analysis)+'</div>':'')
         +(parsed.reasoning?'<div class="ls-analyze-reason">'+escHtml(parsed.reasoning)+'</div>':'')
         +'<button id="ls-analyze-apply" class="menu_button" style="margin-top:8px;width:100%"><i class="fa-solid fa-check"></i> Применить счёт '+parsed.suggestedScore+'</button>';
+      document.querySelectorAll('.ls-rt-confirm-btn').forEach(b=>b.addEventListener('click',function(){
+        loveData().relationType=this.dataset.rt||'neutral';
+        saveSettingsDebounced();syncUI();pulseWidget();
+        toast('success','Тип: '+(RELATION_TYPES[this.dataset.rt]?.label||''));
+      }));
       document.getElementById('ls-analyze-apply')?.addEventListener('click',()=>{
         const d=loveData(),prev=d.score;
         d.score=Math.max(MIN_SCORE,Math.min(parsed.suggestedScore,d.maxScore));
@@ -828,6 +866,11 @@ function settingsPanelHTML() {
     // Основные
     +'<div class="ls-row"><label class="checkbox_label" for="ls-enabled"><input type="checkbox" id="ls-enabled"><span>Включено</span></label></div>'
     +'<div class="ls-row"><span style="font-size:12px;opacity:.6;">Очки:</span><input id="ls-val" type="number" class="ls-num-input" style="width:72px;"><span style="opacity:.3;">/</span><input id="ls-max" type="number" min="1" class="ls-num-input" style="width:72px;"><button id="ls-reset-btn" class="menu_button">Сбросить</button></div>'
+    +'<div class="ls-rel-type-row">'
+    +Object.entries(RELATION_TYPES).map(([k,v])=>{const svg=k==='hostile'?'<svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" style=\"display:block;fill:currentColor;transform:rotate(180deg);\"><path d=\"M10,15.5 C10,15.5 1,9.5 1,4.5 C1,2 3,0.5 5.5,0.5 C7.5,0.5 9.2,2 10,3.5 C10.8,2 12.5,0.5 14.5,0.5 C17,0.5 19,2 19,4.5 C19,9.5 10,15.5 10,15.5Z\"/></svg>':'<svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" style=\"display:block;fill:currentColor;\"><path d=\"M10,15.5 C10,15.5 1,9.5 1,4.5 C1,2 3,0.5 5.5,0.5 C7.5,0.5 9.2,2 10,3.5 C10.8,2 12.5,0.5 14.5,0.5 C17,0.5 19,2 19,4.5 C19,9.5 10,15.5 10,15.5Z\"/></svg>';return '<span class="ls-rel-type-btn ls-rt-'+k+(loveData().relationType===k?' ls-rt-active':'')+'" data-rt="'+k+'" title="'+v.label+'">'+svg+'</span>';}).join('')
+    +'<span class="ls-rel-type-label" id="ls-rt-label">'+(RELATION_TYPES[loveData().relationType||'neutral']?.label||'')+'</span>'
+    +'</div>'
+    +'<div id="ls-type-info"></div>'
     +'<div class="ls-row"><span style="font-size:12px;opacity:.6;white-space:nowrap;">Размер:</span><input type="range" id="ls-size" min="36" max="128" step="4" class="ls-size-slider" style="flex:1;"><span id="ls-size-label" style="font-size:12px;min-width:36px;text-align:right;opacity:.5;">64px</span><button id="ls-reset-pos" class="menu_button" title="Вернуть в угол">Позиция</button></div>'
     +'<div id="ls-active-state" style="display:none;"><strong>Сейчас:</strong> <span id="ls-active-text"></span></div>'
 
@@ -1003,6 +1046,11 @@ function buildPrompt() {
   if(changes.length){p+='\n\nLove Score Changes:';changes.forEach(x=>{p+='\n'+(x.delta>=0?'+':'')+x.delta+': '+x.description.trim();});}
   if(interps.length){p+='\n\nLove Scale:';interps.forEach(x=>{p+='\n'+x.min+' to '+x.max+': '+x.description.trim()+((d.score>=x.min&&d.score<=x.max)?' <- NOW':'');});}
   if(c.gradualProgression) p+='\\n\\nGradual Progression RULE: STRICT. Allowed values only: -2, -1, 0, +1, +2. Never go beyond \\u00b12 per response. Default is 0, use \\u00b11 for noticeable moments, \\u00b12 only for clearly significant ones.';
+  const _rtKeys2=Object.keys(RELATION_TYPES).join('|');
+  if(d.relationType==='neutral'||!d.relationType)
+    p+='\n\nOnce the relationship type becomes evident, add once: <!-- [RELATION_TYPE:key] --> where key is one of: '+_rtKeys2+'.';
+  else
+    p+='\n\nIf relationship type changes, update with: <!-- [RELATION_TYPE:key] --> ('+_rtKeys2+').'; 
   p+='\n\nAt the end of each response include: <!-- [LOVE_SCORE:X] --> replacing X with the updated score ('+MIN_SCORE+' to '+d.maxScore+').';
   return p;
 }
@@ -1040,6 +1088,17 @@ function onMessageReceived() {
       const ms=(d.milestones||[]).find(m=>m.threshold===thr&&!m.done);
       if(ms){ms.done=true;toast('success','Событие: '+ms.description.slice(0,55));renderMilestones();}
     });
+    // Тип отношений
+    const rtm=text.match(/<!--\s*\[RELATION_TYPE:([\w]+)\]\s*-->/i);
+    if(rtm){
+      const key=rtm[1].toLowerCase(),d=loveData();
+      if(RELATION_TYPES[key]&&key!==d.relationType){
+        d.relationType=key;
+        const rtLabel=RELATION_TYPES[key].label;
+        toast('info','Тип отношений: '+rtLabel);
+        syncUI();updateWidgetGlow(key,d.score<0);
+      }
+    }
     saveSettingsDebounced();updatePromptInjection();
   } catch(e){toast('error','Ошибка: '+e.message);}
 }
@@ -1058,6 +1117,12 @@ function syncUI() {
   const scMap={'ls-scope-changes':'changes','ls-scope-pos-ranges':'positiveRanges','ls-scope-neg-ranges':'negativeRanges','ls-scope-milestones':'milestones','ls-scope-max':'suggestedMax'};
   Object.entries(scMap).forEach(([id,key])=>{const e=el(id);if(e) e.checked=sc[key]??true;});
   updateCharPreview(getCurrentCharacterCard());
+  // Тип отношений
+  const _rtd=loveData().relationType||'romance';
+  document.querySelectorAll('.ls-rel-type-btn').forEach(b=>{
+    b.classList.toggle('ls-rt-active',b.dataset.rt===_rtd);
+  });
+  const _rtlbl=document.getElementById('ls-rt-label');if(_rtlbl) _rtlbl.textContent=RELATION_TYPES[_rtd]?.label||'';
   renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();refreshWidget();
 }
 
@@ -1102,6 +1167,14 @@ function bindMainEvents() {
   $(document).off('click','#ls-gen-btn').on('click','#ls-gen-btn',onGenerateClick);
   $(document).off('change','#ls-gen-msg-count').on('change','#ls-gen-msg-count',function(){cfg().chatAnalysisMsgCount=parseInt(this.value)||0;saveSettingsDebounced();});
   $(document).off('click','#ls-analyze-btn').on('click','#ls-analyze-btn',onAnalyzeClick);
+  $(document).off('click','.ls-rel-type-btn').on('click','.ls-rel-type-btn',function(){
+    const k=this.dataset.rt,t=RELATION_TYPES[k],info=document.getElementById('ls-type-info');
+    if(!info||!t) return;
+    if(info.dataset.showing===k){info.style.display='none';info.dataset.showing='';return;}
+    info.dataset.showing=k;
+    info.innerHTML='<span style="color:'+t.color+';font-weight:600;">'+escHtml(t.label)+'</span> — <span style="opacity:.7;">'+escHtml(t.desc)+'</span>';
+    info.style.display='block';
+  });
   
   // Пресеты
   $(document).off('click','#ls-preset-save').on('click','#ls-preset-save',()=>{
