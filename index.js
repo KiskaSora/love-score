@@ -115,14 +115,13 @@ function getPendingMilestones() {
 function heartColor(score, max, rt='neutral') {
   const _t=RELATION_TYPES[rt]||RELATION_TYPES.neutral;
   const r=Math.max(0,Math.min(1,Math.abs(score)/(score>=0?max:100)));
-  if (r===0) return '#ffffff';
   if (score >= 0) {
-    if (r<=0.5) return _lerpHex('#ffffff',_t.color,r*2);
+    if (r<=0.5) return _lerpHex('#ffffff',_t.color,Math.max(r*2,0.1));
     return _lerpHex(_t.color,_t.deep,(r-0.5)*2);
   } else {
     const negPeak=(rt==='hostile')?'#0a8c3a':'#4ec900';
     const negDeep=(rt==='hostile')?'#041a0a':'#050f00';
-    if (r<=0.5) return _lerpHex('#ffffff',negPeak,r*2);
+    if (r<=0.5) return _lerpHex('#ffffff',negPeak,Math.max(r*2,0.1));
     return _lerpHex(negPeak,negDeep,(r-0.5)*2);
   }
 }
@@ -265,12 +264,10 @@ function injectStyles() {
   position:fixed;top:100px;left:18px;bottom:auto;right:auto;
   width:64px;height:60px;cursor:grab;z-index:999999;
   user-select:none;touch-action:none;
-  filter:drop-shadow(0 4px 14px rgba(255,60,100,.35));
-  transition:filter .2s ease,transform .35s ease;
+  filter:var(--ls-glow,drop-shadow(0 4px 14px rgba(200,200,200,.25)));
+  transition:filter .3s ease,transform .35s ease;
 }
-#ls-widget:hover{filter:drop-shadow(0 6px 22px rgba(255,60,100,.6));}
-#ls-widget.ls-neg{filter:drop-shadow(0 4px 14px rgba(60,220,60,.4));}
-#ls-widget.ls-neg:hover{filter:drop-shadow(0 6px 22px rgba(60,255,60,.75));}
+#ls-widget:hover{filter:var(--ls-hover-glow,drop-shadow(0 6px 22px rgba(200,200,200,.5)));}
 #ls-widget:active{cursor:grabbing;}
 #ls-widget.ls-beat{animation:ls-hb .55s cubic-bezier(.36,1.8,.5,1) forwards;}
 #ls-widget.ls-flip{animation:ls-flip-anim .55s ease forwards;}
@@ -384,6 +381,7 @@ function buildHeartSVG(score, max, rt='neutral') {
   return '<svg viewBox="0 0 100 95" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;overflow:visible;">'
     + '<defs><clipPath id="ls-hclip"><path ' + tr + ' d="' + P + '"/></clipPath></defs>'
     + '<path ' + tr + ' d="' + P + '" fill="rgba(22,10,16,.88)" stroke="' + stroke + '" stroke-width="2.5"/>'
+    + '<rect x="0" y="0" width="100" height="95" clip-path="url(#ls-hclip)" fill="'+(RELATION_TYPES[rt]||RELATION_TYPES.neutral).color+'" opacity="0.13"/>'
     + '<rect id="ls-heart-fill" x="0" y="' + fillY + '" width="100" height="' + fillH + '" clip-path="url(#ls-hclip)" fill="' + col + '" opacity="0.92"/>'
     + '<text id="ls-score-main" x="50" y="43" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="' + fs + '" font-weight="700" font-family="system-ui,sans-serif">' + escHtml(String(score)) + '</text>'
     + '<text id="ls-score-denom" x="50" y="62" text-anchor="middle" dominant-baseline="middle" fill="rgba(255,255,255,.6)" font-size="10" font-family="system-ui,sans-serif">/' + escHtml(String(max)) + '</text>'
@@ -402,14 +400,22 @@ function setWidgetSign(isNeg) {
   if (isNeg) w.classList.add('ls-neg'); else w.classList.remove('ls-neg');
 }
 
+function updateWidgetGlow(rt, isNeg) {
+  const _tc = isNeg ? [60,220,60] : _h2r((RELATION_TYPES[rt]||RELATION_TYPES.neutral).color);
+  const [r,g,b] = _tc;
+  const a1=isNeg?.4:.3, a2=isNeg?.75:.55;
+  document.documentElement.style.setProperty('--ls-glow',   `drop-shadow(0 4px 14px rgba(${r},${g},${b},${a1}))`);
+  document.documentElement.style.setProperty('--ls-hover-glow',`drop-shadow(0 6px 22px rgba(${r},${g},${b},${a2}))`);
+}
 function createWidget() {
   if (document.getElementById('ls-widget')) return;
   injectStyles();
   const d = loveData(), c = cfg();
   const w = document.createElement('div'); w.id = 'ls-widget';
-  w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'romance');
+  w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'neutral');
   document.body.appendChild(w);
   const sz = c.widgetSize || 64; applyWidgetSize(sz); setWidgetSign(d.score < 0);
+  updateWidgetGlow(d.relationType||'neutral', d.score<0);
   if (c.widgetPos?.top != null) {
     const st = parseFloat(c.widgetPos.top), sl = parseFloat(c.widgetPos.left);
     w.style.top  = clamp(isNaN(st) ? 100 : st, 8, window.innerHeight - Math.round(sz*.94) - 8) + 'px';
@@ -425,9 +431,9 @@ function makeDraggable(w) {
     const r = w.getBoundingClientRect(); grabX = e.clientX-r.left; grabY = e.clientY-r.top;
     drag = true; moved = false; w.setPointerCapture(e.pointerId);
     w.style.transition = 'none';
-    w.style.filter = loveData().score < 0
-      ? 'drop-shadow(0 8px 28px rgba(60,255,60,.8))'
-      : 'drop-shadow(0 8px 28px rgba(255,60,100,.7))';
+    const _drt=loveData().relationType||'neutral';
+    const _dc=loveData().score<0?[60,255,60]:_h2r((RELATION_TYPES[_drt]||RELATION_TYPES.neutral).color);
+    w.style.filter=`drop-shadow(0 8px 28px rgba(${_dc[0]},${_dc[1]},${_dc[2]},.75))`;
     e.preventDefault();
   });
   w.addEventListener('pointermove', e => {
@@ -460,7 +466,10 @@ function refreshWidget() {
     if (!isNeg) { const r = Math.max(0,Math.min(1,d.score/d.maxScore)); fillY=(95*(1-r)).toFixed(2); fillH=(95*r).toFixed(2); }
     else { const r=Math.max(0,Math.min(1,Math.abs(d.score)/100)); fillY='0'; fillH=(95*r).toFixed(2); }
     fill.setAttribute('y', fillY); fill.setAttribute('height', fillH);
-    const _rt=d.relationType||'romance'; fill.setAttribute('fill', heartColor(d.score, d.maxScore, _rt));
+    const _rt=d.relationType||'neutral';
+    fill.setAttribute('fill', heartColor(d.score, d.maxScore, _rt));
+    const _base=w.querySelector('rect:first-of-type');
+    if(_base) { _base.setAttribute('fill',(RELATION_TYPES[_rt]||RELATION_TYPES.neutral).color); _base.setAttribute('opacity','0.13'); }
     main.textContent = String(d.score); main.setAttribute('font-size', Math.abs(d.score)>=100?'13':'17');
     denom.textContent = '/' + d.maxScore;
     // Пересборка SVG если знак изменился
@@ -468,8 +477,9 @@ function refreshWidget() {
     const isRotated = path?.getAttribute('transform')?.includes('rotate') ?? false;
     if ((isNeg && !isRotated) || (!isNeg && isRotated)) w.innerHTML = buildHeartSVG(d.score, d.maxScore, _rt);
   } else {
-    w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'romance');
+    w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'neutral');
   }
+  updateWidgetGlow(d.relationType||'neutral', d.score<0);
   const tip = document.getElementById('ls-status-tip');
   if (tip) tip.textContent = getActiveInterp()?.description?.trim() || (d.score + ' / ' + d.maxScore);
 }
@@ -1118,7 +1128,7 @@ function syncUI() {
   Object.entries(scMap).forEach(([id,key])=>{const e=el(id);if(e) e.checked=sc[key]??true;});
   updateCharPreview(getCurrentCharacterCard());
   // Тип отношений
-  const _rtd=loveData().relationType||'romance';
+  const _rtd=loveData().relationType||'neutral';
   document.querySelectorAll('.ls-rel-type-btn').forEach(b=>{
     b.classList.toggle('ls-rt-active',b.dataset.rt===_rtd);
   });
