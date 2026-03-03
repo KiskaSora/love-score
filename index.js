@@ -659,7 +659,7 @@ function getChatHistory(n) {
   try {
     const ctx=SillyTavern?.getContext?.();
     if(!ctx?.chat?.length) return '';
-    const msgs=ctx.chat.slice(-Math.max(1,n));
+    const msgs=n>0?ctx.chat.slice(-n):ctx.chat;
     const charName=getCurrentCharacterCard()?.name||'Персонаж';
     return msgs.map(m=>{
       const who=m.is_user?'Игрок':charName;
@@ -719,7 +719,7 @@ async function onAnalyzeClick() {
     if(!char){status.textContent='Нет персонажа.';return;}
     const cardText=buildCharacterCardText(char);
     if(!cardText.trim()){status.textContent='Пустая карта персонажа.';return;}
-    const n=parseInt(cfg().chatAnalysisMsgCount)||20;
+    const n=parseInt(cfg().chatAnalysisMsgCount??20);
     const history=getChatHistory(n);
     if(!history.trim()){status.textContent='Нет сообщений в чате.';return;}
     status.textContent='Анализирую '+n+' сообщений...';
@@ -783,7 +783,7 @@ async function onGenerateClick() {
     const cardText=buildCharacterCardText(char);
     if(!cardText.trim()){status.textContent='Карточка персонажа пустая.';return;}
     status.textContent='Генерирую для: '+(char.name||'персонаж')+'...';
-    const _genMsgN=parseInt(cfg().chatAnalysisMsgCount)||0;
+    const _genMsgN=parseInt(cfg().chatAnalysisMsgCount??0);
     const _genHistory=_genMsgN>0?getChatHistory(_genMsgN):'';
     if(_genHistory) status.textContent='Читаю '+_genMsgN+' сообщ. + карту персонажа...';
     else status.textContent='Читаю карту персонажа (без истории чата)...';
@@ -974,7 +974,7 @@ function settingsPanelHTML() {
     +'<div class="ls-hint">При достижении порога персонаж инициирует событие.</div>'
     +'<div class="ls-milestone-reset-row"><button id="ls-milestone-reset-all" class="menu_button">Сбросить все</button></div>'
     +'<div id="ls-milestones-container"></div>'
-    +'<div class="ls-row" style="margin-top:10px;"><label class="checkbox_label" for="ls-gradual"><input type="checkbox" id="ls-gradual"><span>Медленное изменение (не более ±10 за ответ)</span></label></div>'
+    +'<div class="ls-row" style="margin-top:10px;"><label class="checkbox_label" for="ls-gradual"><input type="checkbox" id="ls-gradual"><span>SlowBurn (не более ±2 за ответ; правила применяются полностью)</span></label></div>'
     +'</div></div></div>';
 }
 
@@ -1055,7 +1055,7 @@ function buildPrompt() {
   }
   if(changes.length){p+='\n\nLove Score Changes:';changes.forEach(x=>{p+='\n'+(x.delta>=0?'+':'')+x.delta+': '+x.description.trim();});}
   if(interps.length){p+='\n\nLove Scale:';interps.forEach(x=>{p+='\n'+x.min+' to '+x.max+': '+x.description.trim()+((d.score>=x.min&&d.score<=x.max)?' <- NOW':'');});}
-  if(c.gradualProgression) p+='\\n\\nGradual Progression RULE: STRICT. Allowed values only: -2, -1, 0, +1, +2. Never go beyond \\u00b12 per response. Default is 0, use \\u00b11 for noticeable moments, \\u00b12 only for clearly significant ones.';
+  if(c.gradualProgression) p+='\\\\n\\\\nSlowBurn RULE: Allowed score changes per response: -2, -1, 0, +1, +2. Default is 0, use \\\\u00b11 for noticeable moments, \\\\u00b12 for significant ones. EXCEPTION: If the change delta matches a configured Score Change rule, its full delta is applied regardless.';
   const _rtKeys2=Object.keys(RELATION_TYPES).join('|');
   if(d.relationType==='neutral'||!d.relationType)
     p+='\n\nOnce the relationship type becomes evident, add once: <!-- [RELATION_TYPE:key] --> where key is one of: '+_rtKeys2+'.';
@@ -1081,7 +1081,7 @@ function onMessageReceived() {
     const sm=text.match(/<!--\s*\[LOVE_SCORE:(-?\d+)\]\s*-->/i);
     if(sm){
       const d=loveData(),c=cfg(); let nv=parseInt(sm[1],10),ov=d.score;
-      if(c.gradualProgression){const md=2;nv=Math.max(ov-md,Math.min(ov+md,nv));}
+      if(c.gradualProgression){const _sbDelta=nv-ov;const _sbRule=(d.scoreChanges||[]).find(r=>r.delta===_sbDelta&&r.description.trim());if(!_sbRule){const md=2;nv=Math.max(ov-md,Math.min(ov+md,nv));}}
       d.score=Math.max(MIN_SCORE,Math.min(nv,d.maxScore));
       const delta=d.score-ov;
       if(delta!==0){
@@ -1114,10 +1114,7 @@ function onMessageReceived() {
 }
 function syncUI() {
   const c=cfg(),d=loveData(),el=id=>document.getElementById(id);
-  // Сброс результата анализа при смене чата/перса
-  const _ar=el('ls-analyze-result');if(_ar){_ar.style.display='none';_ar.innerHTML='';}
-  const _as=el('ls-analyze-status');if(_as) _as.textContent='';
-  const _ti=el('ls-type-info');if(_ti){_ti.style.display='none';_ti.dataset.showing='';}
+
   const cb=el('ls-enabled');if(cb) cb.checked=c.isEnabled;
   const v=el('ls-val');if(v) v.value=d.score;
   const m=el('ls-max');if(m) m.value=d.maxScore;
@@ -1219,6 +1216,16 @@ jQuery(()=>{
     createWidget();bindMainEvents();syncUI();updatePromptInjection();
     eventSource.on(event_types.MESSAGE_SENT,()=>updatePromptInjection());
     eventSource.on(event_types.MESSAGE_RECEIVED,onMessageReceived);
-    if(event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED,()=>{cfg().lastCheckedMessageId=null;syncUI();updatePromptInjection();});
+    if(event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED,()=>{
+  cfg().lastCheckedMessageId=null;
+  // Сброс панели анализа при смене чата
+  const _arCC=document.getElementById('ls-analyze-result');
+  if(_arCC){_arCC.style.display='none';_arCC.innerHTML='';}
+  const _asCC=document.getElementById('ls-analyze-status');
+  if(_asCC) _asCC.textContent='';
+  const _tiCC=document.getElementById('ls-type-info');
+  if(_tiCC){_tiCC.style.display='none';_tiCC.dataset.showing='';}
+  syncUI();updatePromptInjection();
+});
   } catch(e){ toast('error','Love Score: ошибка инициализации — '+e.message); }
 });
