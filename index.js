@@ -16,6 +16,8 @@ const defaultSettings = {
   autoSuggestEnabled: false,
   autoSuggestInterval: 20,
   _autoSuggestMsgCounter: 0,
+  groupMode: false,
+  groupNpcs: [],
 };
 
 // ─── Цветовые хелперы ────────────────────────────────────────────────────────
@@ -410,6 +412,94 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 /* ── Auto-suggest box ── */
 #ls-autosuggest-result{margin-top:8px;padding:10px;border-radius:6px;background:rgba(255,200,100,.04);border:1px dashed rgba(255,200,100,.25);display:none;font-size:12px;line-height:1.6;color:var(--SmartThemeBodyColor,#ccc);}
 #ls-autosuggest-result .ls-as-title{font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;opacity:.5;margin-bottom:6px;}
+
+/* ── Debug / Отладка ── */
+#ls-debug-prompt{width:100%;box-sizing:border-box;min-height:140px;max-height:320px;overflow-y:auto;resize:vertical;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.07);border-radius:6px;color:rgba(180,255,180,.8);font-family:'Courier New',monospace;font-size:10px;line-height:1.6;padding:10px;white-space:pre-wrap;word-break:break-word;outline:none;}
+.ls-debug-block{margin-bottom:12px;}
+.ls-debug-label{font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;opacity:.35;margin-bottom:4px;display:flex;align-items:center;gap:6px;}
+.ls-debug-label i{opacity:.7;}
+.ls-debug-copy{padding:2px 8px!important;min-width:unset!important;font-size:10px!important;opacity:.4;margin-left:auto;}
+.ls-debug-copy:hover{opacity:.9;}
+.ls-debug-npc-state{display:flex;flex-direction:column;gap:4px;}
+.ls-debug-npc-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);font-size:11px;}
+.ls-debug-npc-name{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ls-debug-npc-score{font-size:12px;font-weight:800;min-width:36px;text-align:right;}
+.ls-debug-npc-rt{font-size:10px;opacity:.5;min-width:70px;}
+.ls-debug-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.ls-debug-stat{display:flex;flex-direction:column;padding:6px 10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:5px;}
+.ls-debug-stat-val{font-size:14px;font-weight:800;color:var(--SmartThemeBodyColor,#eee);}
+.ls-debug-stat-key{font-size:9px;opacity:.35;text-transform:uppercase;letter-spacing:.5px;margin-top:1px;}
+.ls-debug-refresh{font-size:11px!important;padding:4px 10px!important;min-width:unset!important;}
+
+.ls-npc-card{position:relative;margin-bottom:8px;border-radius:10px;border:1px solid rgba(255,255,255,.08);overflow:hidden;background:rgba(255,255,255,.015);transition:border-color .2s,box-shadow .2s;}
+.ls-npc-card:hover{border-color:rgba(255,255,255,.15);box-shadow:0 4px 20px rgba(0,0,0,.25);}
+/* avatar */
+.ls-npc-av-wrap{position:relative;width:46px;height:46px;flex-shrink:0;cursor:pointer;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);box-shadow:0 2px 10px rgba(0,0,0,.4);transition:border-color .2s;}
+.ls-npc-av-wrap:hover .ls-npc-av-overlay{opacity:1;}
+.ls-npc-av-wrap:hover{border-color:rgba(255,255,255,.4);}
+.ls-npc-av-img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;}
+.ls-npc-av-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:20px;color:rgba(255,255,255,.25);}
+.ls-npc-av-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;opacity:0;transition:opacity .15s;border-radius:50%;}
+/* top row */
+.ls-npc-top{display:flex;align-items:center;gap:10px;padding:10px 10px 8px 12px;}
+.ls-npc-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+.ls-npc-names{display:flex;gap:6px;align-items:center;}
+.ls-npc-name{font-size:13px;font-weight:700;color:var(--SmartThemeBodyColor,#eee);background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.08);outline:none;flex:1;min-width:0;padding:1px 2px;transition:border-color .15s;}
+.ls-npc-name:focus{border-bottom-color:rgba(255,255,255,.35);}
+.ls-npc-name-en{font-size:10px;color:rgba(255,255,255,.35);background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.08);outline:none;width:80px;flex-shrink:0;padding:1px 2px;transition:border-color .15s;font-style:italic;}
+.ls-npc-name-en:focus{border-bottom-color:rgba(255,255,255,.25);color:rgba(255,255,255,.6);}
+.ls-npc-name-en::placeholder{opacity:.5;}
+/* relation + score row */
+.ls-npc-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.ls-npc-rt-row{display:flex;gap:3px;align-items:center;}
+.ls-npc-rt-btn{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;cursor:pointer;opacity:.18;transition:opacity .15s,filter .15s;flex-shrink:0;border-radius:50%;}
+.ls-npc-rt-btn:hover{opacity:.5;}
+.ls-npc-rt-btn.ls-rt-active{opacity:1;filter:drop-shadow(0 1px 5px currentColor);}
+.ls-npc-rt-label{font-size:10px;font-weight:600;margin-left:3px;opacity:.8;}
+.ls-npc-sep{opacity:.15;font-size:10px;}
+.ls-npc-score-row{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0;}
+.ls-npc-adj-btn{width:20px;height:20px;padding:0!important;min-width:unset!important;font-size:10px!important;display:flex;align-items:center;justify-content:center;opacity:.6;}
+.ls-npc-adj-btn:hover{opacity:1;}
+.ls-npc-score-val{font-size:13px;font-weight:800;min-width:26px;text-align:center;}
+.ls-npc-score-sep{font-size:10px;opacity:.25;}
+.ls-npc-score-max{width:36px;font-size:10px;background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.1);color:rgba(255,255,255,.4);outline:none;text-align:center;padding:0;}
+.ls-npc-score-max:focus{border-bottom-color:rgba(255,255,255,.3);color:rgba(255,255,255,.7);}
+.ls-npc-del-btn{opacity:.2;transition:opacity .15s;padding:3px 6px!important;min-width:unset!important;font-size:11px!important;flex-shrink:0;}
+.ls-npc-del-btn:hover{opacity:.8;}
+/* bar */
+.ls-npc-bar-wrap{height:4px;background:rgba(255,255,255,.05);position:relative;overflow:hidden;}
+.ls-npc-bar-fill{height:100%;transition:width .5s cubic-bezier(.4,0,.2,1),background .4s;}
+.ls-npc-bar-neg{position:absolute;top:0;right:0;height:100%;transition:width .5s cubic-bezier(.4,0,.2,1);}
+/* fields */
+.ls-npc-fields{padding:6px 12px 10px;}
+.ls-npc-field{width:100%;box-sizing:border-box;resize:vertical;background:transparent;border:none;border-top:1px solid rgba(255,255,255,.05);color:var(--SmartThemeBodyColor,#bbb);font-family:inherit;font-size:11px;line-height:1.55;padding:5px 0 0;min-height:32px;outline:none;opacity:.65;transition:opacity .15s;}
+.ls-npc-field:focus{opacity:1;border-top-color:rgba(255,255,255,.18);}
+.ls-npc-field+.ls-npc-field{margin-top:6px;}
+.ls-npc-lb-toggle{display:flex;align-items:center;gap:5px;padding:4px 0 5px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;user-select:none;}
+.ls-npc-lb-toggle input{cursor:pointer;accent-color:#a78bfa;}
+.ls-npc-add-row{display:flex;gap:6px;margin-bottom:8px;}
+.ls-npc-add-row .menu_button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px!important;}
+/* Lorebook picker */
+#ls-lorebook-picker{background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden;margin-bottom:10px;max-height:320px;overflow-y:auto;}
+.ls-lb-header{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.06);position:sticky;top:0;background:rgba(20,15,25,.95);backdrop-filter:blur(8px);z-index:2;}
+.ls-lb-group{border-bottom:1px solid rgba(255,255,255,.05);}
+.ls-lb-group:last-child{border-bottom:none;}
+.ls-lb-group-title{font-size:10px;letter-spacing:.5px;text-transform:uppercase;opacity:.3;padding:6px 10px 4px;font-weight:600;}
+.ls-lb-entry{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;gap:1px 8px;padding:7px 10px;cursor:pointer;border-top:1px solid rgba(255,255,255,.04);transition:background .12s;}
+.ls-lb-entry:hover{background:rgba(255,255,255,.04);}
+.ls-lb-entry-name{font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);grid-row:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ls-lb-entry-preview{font-size:10px;opacity:.35;line-height:1.4;grid-row:2;overflow:hidden;max-height:1.5em;transition:max-height .25s;}
+.ls-lb-entry.ls-lb-expanded .ls-lb-entry-preview{max-height:12em;white-space:pre-wrap;opacity:.55;}
+.ls-lb-add-btn{grid-row:1/3;align-self:center;width:24px!important;height:24px!important;padding:0!important;min-width:unset!important;font-size:11px!important;opacity:.45;flex-shrink:0;}
+.ls-lb-add-btn:hover:not(:disabled){opacity:1;}
+.ls-lb-add-btn:disabled{opacity:.2;cursor:default;}
+.ls-group-empty{font-size:12px;opacity:.3;padding:16px;text-align:center;font-style:italic;}
+
+/* ── Sub-sections ── */
+.ls-sub-acc { margin-left: 6px; }
+.ls-sub-acc + .ls-sub-acc { margin-top: 1px; }
+.ls-sub-acc-header { padding-left: 10px !important; font-size: 12px !important; opacity: .78; }
+.ls-sub-acc-header:hover { opacity: 1; }
 `;
   document.head.appendChild(el);
 }
@@ -906,10 +996,390 @@ function renderPresets() {
   $(ct).off('click','.ls-preset-del').on('click','.ls-preset-del',function(){ deletePreset(String($(this).data('id'))); });
 }
 
-// ─── HTML панели (с аккордеонами) ─────────────────────────────────────────────
+// ─── Окружение (группа NPC) ──────────────────────────────────────────────────
+function mkNpc(overrides={}) {
+  return {
+    id: Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    name: 'NPC',
+    nameEn: '',
+    relationType: 'neutral',
+    score: 0,
+    maxScore: 100,
+    avatarUrl: '',
+    description: '',
+    ...overrides
+  };
+}
+
+// NPC хранятся PER-CHAT внутри chatLoveData
+function groupNpcs() {
+  const d=chatLoveData(); if(!d.groupNpcs) d.groupNpcs=[]; return d.groupNpcs;
+}
+
+function saveGroupNpcs() {
+  saveSettingsDebounced(); updatePromptInjection();
+}
+
+
+function renderGroupNpcs() {
+  const ct=document.getElementById('ls-group-list'); if(!ct) return;
+  const npcs=groupNpcs();
+  if(!npcs.length){
+    ct.innerHTML='<div class="ls-group-empty"><i class="fa-solid fa-user-slash" style="margin-right:6px;"></i>Окружение пустое</div>';
+    return;
+  }
+  ct.innerHTML=npcs.map(npc=>{
+    const rt=RELATION_TYPES[npc.relationType||'neutral']||RELATION_TYPES.neutral;
+    const [r,g,b]=_h2r(rt.color);
+    const scoreColor=npc.score<0?'#4ec900':rt.color;
+
+    const avInner=npc.avatarUrl
+      ?`<img class="ls-npc-av-img" src="${escHtml(npc.avatarUrl)}" alt="" onerror="this.outerHTML='<div class=\\'ls-npc-av-ph\\'><i class=\\'fa-solid fa-user\\'></i></div>'">`
+      :`<div class="ls-npc-av-ph"><i class="fa-solid fa-user"></i></div>`;
+
+    const rtBtns=Object.entries(RELATION_TYPES).map(([k,v])=>{
+      const isHostile=k==='hostile';
+      const svg=`<svg viewBox="0 0 16 13" width="12" height="10" style="display:block;fill:currentColor;${isHostile?'transform:rotate(180deg);':''}"><path d="M8,12 C8,12 1,7.5 1,3.5 C1,1.5 2.5,0.5 4,0.5 C6,0.5 7.5,1.8 8,3 C8.5,1.8 10,0.5 12,0.5 C13.5,0.5 15,1.5 15,3.5 C15,7.5 8,12 8,12Z"/></svg>`;
+      return `<span class="ls-npc-rt-btn ls-rt-${k}${npc.relationType===k?' ls-rt-active':''}" data-nid="${npc.id}" data-rt="${k}" title="${v.label}" style="color:${v.color}">${svg}</span>`;
+    }).join('');
+
+    // Полоса
+    let barHTML;
+    const isNeg=npc.score<0;
+    const barBaseColor=isNeg?'#4ec900':rt.color;
+    const barDeepColor=isNeg?'#1a5500':rt.deep;
+    const [br,bg,bb]=_h2r(barBaseColor);
+    const [dr,dg,db]=_h2r(barDeepColor);
+    if(!isNeg){
+      const pct=Math.max(0,Math.min(100,(npc.score/Math.max(1,npc.maxScore))*100)).toFixed(1);
+      barHTML=`<div class="ls-npc-bar-fill" style="width:${pct}%;background:linear-gradient(90deg,rgba(${br},${bg},${bb},.12) 0%,rgba(${br},${bg},${bb},.82) 65%,rgba(${dr},${dg},${db},1) 100%);box-shadow:0 0 6px rgba(${br},${bg},${bb},.4);"></div>`;
+    } else {
+      const pct=Math.max(0,Math.min(100,(Math.abs(npc.score)/100)*100)).toFixed(1);
+      barHTML=`<div class="ls-npc-bar-neg" style="width:${pct}%;background:linear-gradient(270deg,rgba(${br},${bg},${bb},.12) 0%,rgba(${br},${bg},${bb},.82) 65%,rgba(${dr},${dg},${db},1) 100%);box-shadow:0 0 6px rgba(${br},${bg},${bb},.4);"></div>`;
+    }
+
+    return `<div class="ls-npc-card" data-nid="${npc.id}" style="border-color:rgba(${r},${g},${b},.15);">
+      <div class="ls-npc-top">
+        <div class="ls-npc-av-wrap ls-npc-av-click" data-nid="${npc.id}" title="Нажми чтобы сменить аватар" style="border-color:rgba(${r},${g},${b},.35);">
+          ${avInner}
+          <div class="ls-npc-av-overlay"><i class="fa-solid fa-camera"></i></div>
+        </div>
+        <div class="ls-npc-body">
+          <div class="ls-npc-names">
+            <input class="ls-npc-name" type="text" value="${escHtml(npc.name)}" data-nid="${npc.id}" placeholder="Имя...">
+            <input class="ls-npc-name-en" type="text" value="${escHtml(npc.nameEn||npc.name)}" data-nid="${npc.id}" placeholder="EN name" title="Имя для инжекта в промпт (англ.)">
+          </div>
+          <div class="ls-npc-meta">
+            <div class="ls-npc-rt-row">${rtBtns}</div>
+            <span class="ls-npc-rt-label" style="color:${rt.color};">${escHtml(rt.label)}</span>
+            <span class="ls-npc-sep">·</span>
+            <div class="ls-npc-score-row">
+              <button class="menu_button ls-npc-adj-btn ls-npc-dec" data-nid="${npc.id}"><i class="fa-solid fa-minus"></i></button>
+              <span class="ls-npc-score-val" style="color:${scoreColor};">${npc.score}</span>
+              <span class="ls-npc-score-sep">/</span>
+              <input class="ls-npc-score-max" type="number" value="${npc.maxScore}" data-nid="${npc.id}" min="1" max="999" title="Макс. очки">
+              <button class="menu_button ls-npc-adj-btn ls-npc-inc" data-nid="${npc.id}"><i class="fa-solid fa-plus"></i></button>
+            </div>
+          </div>
+        </div>
+        <button class="menu_button ls-npc-del-btn" data-nid="${npc.id}" title="Убрать из окружения"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="ls-npc-bar-wrap">${barHTML}</div>
+      <div class="ls-npc-fields">
+        ${npc.fromLorebook ? `<label class="ls-npc-lb-toggle" title="Описание уже есть в лорбуке — повторный инжект не нужен">
+          <input type="checkbox" class="ls-npc-skip-desc" data-nid="${npc.id}" ${npc.skipDescInject?'checked':''}>
+          <span style="font-size:10px;opacity:.55;"><i class="fa-solid fa-book" style="margin-right:3px;color:#a78bfa;"></i>Описание из лорбука — не дублировать в промпт</span>
+        </label>` : ''}
+        <textarea class="ls-npc-field ls-npc-desc" data-nid="${npc.id}" rows="2" placeholder="Описание / характер для промпта…" ${npc.skipDescInject?'style="opacity:.3;pointer-events:none;"':''}>${escHtml(npc.description||'')}</textarea>
+      </div>
+    </div>`;
+  }).join('');
+  bindGroupNpcEvents();
+}
+
+function bindGroupNpcEvents() {
+  const ct=document.getElementById('ls-group-list'); if(!ct) return;
+  const save=()=>saveGroupNpcs();
+  const npc=id=>groupNpcs().find(n=>n.id===id);
+
+  $(ct).off('input','.ls-npc-name').on('input','.ls-npc-name',function(){
+    const n=npc(this.dataset.nid); if(n){n.name=this.value;save();}
+  });
+  $(ct).off('input','.ls-npc-name-en').on('input','.ls-npc-name-en',function(){
+    const n=npc(this.dataset.nid); if(n){n.nameEn=this.value;save();}
+  });
+  $(ct).off('input','.ls-npc-desc').on('input','.ls-npc-desc',function(){
+    const n=npc(this.dataset.nid); if(n){n.description=this.value;save();}
+  });
+  $(ct).off('change','.ls-npc-skip-desc').on('change','.ls-npc-skip-desc',function(){
+    const n=npc(this.dataset.nid); if(!n) return;
+    n.skipDescInject=this.checked;
+    save();
+    // dim/undim the textarea
+    const card=ct.querySelector(`.ls-npc-card[data-nid="${this.dataset.nid}"]`);
+    const ta=card?.querySelector('.ls-npc-desc');
+    if(ta) ta.style.cssText=this.checked?'opacity:.3;pointer-events:none;':'';
+    toast('info', this.checked ? 'Описание не будет дублироваться в промпт' : 'Описание включено в промпт');
+  });
+  $(ct).off('change','.ls-npc-score-max').on('change','.ls-npc-score-max',function(){
+    const n=npc(this.dataset.nid); if(n){n.maxScore=Math.max(1,parseInt(this.value)||100);save();renderGroupNpcs();}
+  });
+  $(ct).off('click','.ls-npc-rt-btn').on('click','.ls-npc-rt-btn',function(){
+    const n=npc(this.dataset.nid); if(!n) return;
+    n.relationType=this.dataset.rt; save(); renderGroupNpcs();
+  });
+  $(ct).off('click','.ls-npc-inc').on('click','.ls-npc-inc',function(){
+    const n=npc(this.dataset.nid); if(!n) return;
+    n.score=Math.min(n.score+1,n.maxScore); save(); renderGroupNpcs();
+  });
+  $(ct).off('click','.ls-npc-dec').on('click','.ls-npc-dec',function(){
+    const n=npc(this.dataset.nid); if(!n) return;
+    n.score=Math.max(n.score-1,MIN_SCORE); save(); renderGroupNpcs();
+  });
+  $(ct).off('click','.ls-npc-del-btn').on('click','.ls-npc-del-btn',function(){
+    const d=chatLoveData(); d.groupNpcs=(d.groupNpcs||[]).filter(n=>n.id!==this.dataset.nid);
+    save(); renderGroupNpcs();
+  });
+  // Клик по аватарке → выбор файла
+  $(ct).off('click','.ls-npc-av-click').on('click','.ls-npc-av-click',function(){
+    const nid=this.dataset.nid;
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+    inp.onchange=()=>{
+      const file=inp.files?.[0]; if(!file) return;
+      const reader=new FileReader();
+      reader.onload=e=>{
+        const n=groupNpcs().find(x=>x.id===nid); if(!n) return;
+        n.avatarUrl=e.target.result; save(); renderGroupNpcs();
+      };
+      reader.readAsDataURL(file);
+    };
+    inp.click();
+  });
+}
+
+// ─── Лорбук пикер ────────────────────────────────────────────────────────────
+function getLorebooks() {
+  // Собираем записи из всех доступных лорбуков текущего персонажа
+  const entries = [];
+  try {
+    const ctx = SillyTavern?.getContext?.(); if (!ctx) return entries;
+    const charIdx = ctx.characterId;
+    const char = Array.isArray(ctx.characters) ? ctx.characters[charIdx] : null;
+
+    // 1. Встроенный лорбук персонажа (character_book)
+    const embedded = char?.data?.character_book?.entries || char?.character_book?.entries || [];
+    embedded.forEach((e,i) => {
+      const label = e.comment?.trim() || (e.keys||[]).filter(Boolean).join(', ') || ('Запись '+(i+1));
+      entries.push({ source: 'embedded', label, content: e.content||'', keys: e.keys||[], id: 'emb_'+i });
+    });
+
+    // 2. Привязанные глобальные лорбуки (world_names / worldInfo)
+    const linked = char?.data?.extensions?.world || char?.world || null;
+    const worldInfoNames = ctx.worldInfoNames || ctx.worldNames || [];
+
+    // Все загруженные книги через ctx.worldInfo (если доступно)
+    const wi = ctx.worldInfo;
+    if (wi) {
+      // worldInfo может быть объект { entries: [...] } или Map
+      const wiEntries = wi.entries ? Object.values(wi.entries) : (Array.isArray(wi) ? wi : []);
+      wiEntries.forEach((e,i) => {
+        const label = e.comment?.trim() || (e.key||e.keys||[]).join?.(', ') || ('WI '+(i+1));
+        const src = e.world || e.book || 'worldinfo';
+        entries.push({ source: src, label, content: e.content||'', keys: e.key||e.keys||[], id: 'wi_'+i });
+      });
+    }
+
+    // 3. Попытка через getWorldInfo если есть
+    if (typeof ctx.getWorldInfo === 'function') {
+      try {
+        const wData = ctx.getWorldInfo();
+        if (wData?.entries) {
+          Object.values(wData.entries).forEach((e,i) => {
+            const label = e.comment?.trim() || (e.key||[]).join(', ') || ('WI2 '+(i+1));
+            if (!entries.find(x=>x.content===e.content))
+              entries.push({ source: e.world||'worldinfo', label, content: e.content||'', keys: e.key||[], id: 'wi2_'+i });
+          });
+        }
+      } catch {}
+    }
+  } catch {}
+  return entries;
+}
+
+function renderLorebookPicker() {
+  const ct = document.getElementById('ls-lorebook-picker-list'); if (!ct) return;
+  const entries = getLorebooks();
+  if (!entries.length) {
+    ct.innerHTML = '<div class="ls-group-empty" style="padding:10px;"><i class="fa-solid fa-book-open" style="margin-right:6px;opacity:.4;"></i>Нет записей — убедись что у персонажа есть лорбук</div>';
+    return;
+  }
+  // Группируем по источнику
+  const groups = {};
+  entries.forEach(e => { (groups[e.source]||(groups[e.source]=[])).push(e); });
+
+  ct.innerHTML = Object.entries(groups).map(([src, ents]) =>
+    `<div class="ls-lb-group">
+      <div class="ls-lb-group-title"><i class="fa-solid fa-book" style="margin-right:5px;opacity:.5;"></i>${escHtml(src==='embedded'?'Встроенный лорбук':src)}</div>
+      ${ents.map(e=>`<div class="ls-lb-entry" data-lbid="${escHtml(e.id)}" title="${escHtml((e.keys||[]).join(', '))}">
+        <div class="ls-lb-entry-name"><i class="fa-solid fa-feather" style="margin-right:5px;opacity:.35;font-size:10px;"></i>${escHtml(e.label)}</div>
+        <div class="ls-lb-entry-preview">${escHtml((e.content||'').slice(0,80))}${(e.content||'').length>80?'…':''}</div>
+        <button class="menu_button ls-lb-add-btn" data-lbid="${escHtml(e.id)}" title="Добавить в окружение"><i class="fa-solid fa-plus"></i></button>
+      </div>`).join('')}
+    </div>`
+  ).join('');
+
+  // Клик «Добавить»
+  $(ct).off('click','.ls-lb-add-btn').on('click','.ls-lb-add-btn',function(ev){
+    ev.stopPropagation();
+    const id = this.dataset.lbid;
+    const entry = getLorebooks().find(e=>e.id===id); if (!entry) return;
+    const firstName = (entry.keys||[]).find(k=>k.trim()) || entry.label || 'NPC';
+    const npc = mkNpc({ name: firstName, nameEn: firstName, description: entry.content, fromLorebook: true, skipDescInject: true });
+    const ld = chatLoveData(); if (!ld.groupNpcs) ld.groupNpcs = [];
+    ld.groupNpcs.push(npc);
+    saveGroupNpcs(); renderGroupNpcs();
+    // Подсветить добавленную запись
+    const el = ct.querySelector(`[data-lbid="${id}"]`);
+    if (el) { el.style.opacity='.4'; this.innerHTML='<i class="fa-solid fa-check"></i>'; this.disabled=true; }
+    toast('success', escHtml(firstName)+' добавлен из лорбука');
+  });
+
+  // Клик по строке тоже открывает превью
+  $(ct).off('click','.ls-lb-entry').on('click','.ls-lb-entry',function(e){
+    if ($(e.target).closest('button').length) return;
+    $(this).toggleClass('ls-lb-expanded');
+  });
+}
+
+// ─── Сканирование чата на NPC из лорбука ────────────────────────────────────
+// Эвристика: насколько запись лорбука похожа на персонажа (а не место/организацию)
+function _lbEntryPersonScore(entry) {
+  const text = ((entry.content||'') + ' ' + (entry.label||'')).toLowerCase();
+  const label = (entry.label||'').trim();
+
+  // ── Сигналы НЕ-персонажа (места, организации, предметы) ──
+  const nonPersonWords = [
+    // RU
+    'город','улица','район','здание','страна','регион','область','посёлок','деревня','столица',
+    'агентство','организация','компания','корпорация','завод','предприятие','учреждение',
+    'военная часть','подразделение','спецслужба','ведомство','министерство','штаб',
+    'оружие','предмет','артефакт','место','локация','объект',
+    // EN
+    'city','town','village','country','region','district','building','location','place',
+    'agency','organization','company','corporation','institution','facility','headquarters',
+    'military unit','department','ministry','weapon','item','artifact','object',
+  ];
+  for (const w of nonPersonWords) { if (text.includes(w)) return -10; }
+
+  // Аббревиатуры (ГРУ, ФСБ, ЦРУ, CIA, FBI, KGB — всё caps, 2-5 букв) → не персонаж
+  if (/^[А-ЯA-Z]{2,5}$/.test(label)) return -10;
+
+  let score = 0;
+
+  // ── Сигналы персонажа ──
+  // Личные местоимения RU
+  const ruPronouns = ['он ','она ','его ','её ','ему ','ей ','им ','ним ','него ','неё '];
+  for (const p of ruPronouns) { if (text.includes(p)) { score += 3; break; } }
+  // Личные местоимения EN
+  const enPronouns = [' he ',' she ',' his ',' her ',' him '];
+  for (const p of enPronouns) { if (text.includes(p)) { score += 3; break; } }
+
+  // Роли/профессии людей RU
+  const ruRoles = ['врач','доктор','офицер','агент','детектив','генерал','майор','капитан',
+    'директор','владелец','хозяин','сотрудник','боец','охранник','телохранитель',
+    'персонаж','мужчина','женщина','девушка','парень','мужик','старик','старуха','ребёнок'];
+  for (const r of ruRoles) { if (text.includes(r)) { score += 4; break; } }
+  // Роли EN
+  const enRoles = ['doctor','officer','agent','detective','general','major','captain',
+    'director','owner','staff','guard','bodyguard','character','man','woman','girl','guy'];
+  for (const r of enRoles) { if (text.includes(r)) { score += 4; break; } }
+
+  // Паттерн "Имя Фамилия" (два+ слова с большой буквы, кириллица или латиница)
+  const isNamePattern = /^[А-ЯЁA-Z][а-яёa-z]+ [А-ЯЁA-Z][а-яёa-z]+/.test(label);
+  if (isNamePattern) score += 5;
+
+  // Упоминание возраста, внешности, характера
+  const personalDetails = ['лет','года','лет,','возраст','внешность','характер','личность',
+    'years old','appearance','personality','trait','born'];
+  for (const d of personalDetails) { if (text.includes(d)) { score += 2; break; } }
+
+  return score;
+}
+
+function scanChatForNpcs() {
+  const box = document.getElementById('ls-scan-result'); if (!box) return;
+  const ld = chatLoveData();
+  const existingNames = new Set((ld.groupNpcs||[]).map(n=>(n.name||'').toLowerCase().trim()));
+  const entries = getLorebooks();
+  if (!entries.length) {
+    box.style.display='block';
+    box.innerHTML='<i class="fa-solid fa-circle-info" style="margin-right:5px;opacity:.5;"></i>Нет записей в лорбуке.';
+    return;
+  }
+
+  // Собираем текст чата
+  let chatText = '';
+  try {
+    const ctx = SillyTavern?.getContext?.();
+    if (ctx?.chat?.length) chatText = ctx.chat.map(m=>(m.mes||'')).join('\n').toLowerCase();
+  } catch {}
+
+  if (!chatText.trim()) {
+    box.style.display='block';
+    box.innerHTML='<i class="fa-solid fa-circle-info" style="margin-right:5px;opacity:.5;"></i>Нет сообщений в чате для поиска.';
+    return;
+  }
+
+  // Ищем только персонажей (personScore > 0), упомянутых в чате
+  const found = entries
+    .filter(e => {
+      const name = ((e.keys||[]).find(k=>k.trim()) || e.label || '').toLowerCase().trim();
+      if (!name || existingNames.has(name)) return false;
+      const mentionedInChat = (e.keys||[e.label]).some(k => k.trim() && chatText.includes(k.trim().toLowerCase()));
+      if (!mentionedInChat) return false;
+      return _lbEntryPersonScore(e) > 0;
+    })
+    .sort((a, b) => _lbEntryPersonScore(b) - _lbEntryPersonScore(a)); // самые "персонажные" — первыми
+
+  box.style.display = 'block';
+  if (!found.length) {
+    box.innerHTML='<i class="fa-solid fa-check" style="margin-right:5px;color:#6ee86e;"></i>Персонажей из лорбука в чате не найдено (или все уже добавлены).';
+    return;
+  }
+
+  box.innerHTML = '<div style="font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;opacity:.45;margin-bottom:6px;"><i class="fa-solid fa-user-group" style="margin-right:4px;"></i>Персонажи в чате — добавить в окружение?</div>'
+    + found.map(e => {
+      const name = (e.keys||[]).find(k=>k.trim()) || e.label || 'NPC';
+      const preview = (e.content||'').slice(0,60).trim();
+      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid rgba(255,255,255,.05);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#eee);">${escHtml(name)}</div>
+          ${preview?`<div style="font-size:10px;opacity:.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escHtml(preview)}…</div>`:''}
+        </div>
+        <button class="menu_button ls-scan-add-btn" data-lbid="${escHtml(e.id)}" style="flex-shrink:0;padding:3px 9px!important;font-size:11px!important;"><i class="fa-solid fa-plus"></i> Добавить</button>
+      </div>`;
+    }).join('');
+
+  $(box).off('click','.ls-scan-add-btn').on('click','.ls-scan-add-btn',function(){
+    const id = this.dataset.lbid;
+    const entry = getLorebooks().find(e=>e.id===id); if (!entry) return;
+    const firstName = (entry.keys||[]).find(k=>k.trim()) || entry.label || 'NPC';
+    const npc = mkNpc({ name: firstName, nameEn: firstName, description: entry.content, fromLorebook: true, skipDescInject: true });
+    const ld2 = chatLoveData(); if (!ld2.groupNpcs) ld2.groupNpcs = [];
+    ld2.groupNpcs.push(npc);
+    saveGroupNpcs(); renderGroupNpcs();
+    this.closest('div[style]').remove();
+    toast('success', escHtml(firstName)+' добавлен из лорбука');
+    if (!box.querySelector('.ls-scan-add-btn')) {
+      box.innerHTML='<i class="fa-solid fa-check" style="margin-right:5px;color:#6ee86e;"></i>Все найденные персонажи добавлены!';
+    }
+  });
+}
+
+
 function acc(id, title, content, open=false) {
-  return `<div class="inline-drawer" id="${id}">
-    <div class="inline-drawer-toggle inline-drawer-header"><b>${title}</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+  return `<div class="inline-drawer ls-sub-acc" id="${id}">
+    <div class="inline-drawer-toggle inline-drawer-header ls-sub-acc-header"><b>${title}</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
     <div class="inline-drawer-content"${open?'':' style="display:none"'}>${content}</div>
   </div>`;
 }
@@ -927,6 +1397,31 @@ function settingsPanelHTML() {
 
   const heartStyleSvgChecked = (c.heartStyle||'svg')==='svg' ? ' checked' : '';
   const heartStyleBlurChecked = (c.heartStyle||'svg')==='blur' ? ' checked' : '';
+
+  // ── Окружение ──
+  const groupContent = `
+    <div class="ls-hint">Отслеживай отношения с несколькими персонажами. Тяни записи из лорбука главного героя или создавай вручную. Данные хранятся отдельно для каждого чата.</div>
+    <div class="ls-row">
+      <label class="checkbox_label" for="ls-group-enabled"><input type="checkbox" id="ls-group-enabled"${c.groupMode?' checked':''}><span>Включить режим окружения</span></label>
+    </div>
+    <div id="ls-group-body" style="${c.groupMode?'':'display:none'}">
+      <div class="ls-npc-add-row">
+        <button id="ls-npc-from-lorebook" class="menu_button"><i class="fa-solid fa-book-open"></i> Из лорбука</button>
+        <button id="ls-npc-add-manual" class="menu_button"><i class="fa-solid fa-pen-to-square"></i> Создать вручную</button>
+      </div>
+      <div class="ls-npc-add-row" style="margin-top:0;margin-bottom:6px;">
+        <button id="ls-npc-scan-chat" class="menu_button" style="flex:1;" title="Найти упомянутых NPC из лорбука в истории чата"><i class="fa-solid fa-magnifying-glass"></i> Найти NPC в чате</button>
+      </div>
+      <div id="ls-scan-result" style="display:none;margin-bottom:8px;padding:8px;border-radius:6px;background:rgba(167,139,250,.05);border:1px dashed rgba(167,139,250,.25);font-size:11px;line-height:1.6;color:var(--SmartThemeBodyColor,#ccc);"></div>
+      <div id="ls-lorebook-picker" style="display:none;">
+        <div class="ls-lb-header">
+          <span style="font-size:11px;opacity:.5;"><i class="fa-solid fa-book-open" style="margin-right:4px;"></i>Выбери записи для добавления</span>
+          <button id="ls-lb-close" class="menu_button" style="padding:2px 8px!important;font-size:11px!important;opacity:.5;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div id="ls-lorebook-picker-list"></div>
+      </div>
+      <div id="ls-group-list"></div>
+    </div>`;
 
   // ── Основное ──
   const mainContent = `
@@ -1055,6 +1550,14 @@ function settingsPanelHTML() {
     </div>
     <div id="ls-preset-list"></div>`;
 
+  const debugContent = `
+    <div class="ls-hint">Просмотр текущего состояния системы, активных инжектов и как они работают.</div>
+    <div class="ls-row" style="justify-content:space-between;">
+      <span style="font-size:12px;opacity:.5;"><i class="fa-solid fa-circle-info" style="margin-right:5px;"></i>Данные обновляются при открытии вкладки</span>
+      <button id="ls-debug-refresh-btn" class="menu_button ls-debug-refresh"><i class="fa-solid fa-rotate"></i> Обновить</button>
+    </div>
+    <div id="ls-debug-content"></div>`;
+
   return `<div id="ls-settings-panel" class="extension-settings">
     <div class="inline-drawer">
       <div class="inline-drawer-toggle inline-drawer-header"><b><i class="fa-solid fa-heart" style="color:#ff4466;margin-right:6px;"></i>Love Score</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
@@ -1063,6 +1566,8 @@ function settingsPanelHTML() {
         ${acc('ls-acc-rules',  'Правила',        rulesContent,   false)}
         ${acc('ls-acc-ai',     'AI генерация',   aiContent,      false)}
         ${acc('ls-acc-presets','Пресеты',        presetsContent, false)}
+        ${acc('ls-acc-group',  'Окружение',      groupContent,   false)}
+        ${acc('ls-acc-debug',  'Отладка',        debugContent,   false)}
       </div>
     </div>
   </div>`;
@@ -1182,6 +1687,46 @@ function buildPrompt() {
   else
     p+='\n\nIf relationship type changes, update with: <!-- [RELATION_TYPE:key] --> ('+_rtKeys+').';
   p+='\n\nAt the end of each response include: <!-- [LOVE_SCORE:X] --> replacing X with the updated score ('+MIN_SCORE+' to '+d.maxScore+').';
+
+  // ── Групповой режим ──
+  const gc=cfg();
+  if(gc.groupMode&&(chatLoveData().groupNpcs||[]).length>0){
+    const active=chatLoveData().groupNpcs.filter(n=>n.name?.trim());
+    if(active.length){
+      const rtKeys=Object.keys(RELATION_TYPES).join('|');
+      p+='\n\n═══════════════════════════════════════';
+      p+='\n[SURROUNDING CHARACTERS — NPC RELATIONSHIP SYSTEM]';
+      p+='\n';
+      p+='\nThe following characters are present in this scene. You MUST track each one\'s';
+      p+='\nrelationship score with the player independently, just like the main character.';
+      p+='\n';
+
+      active.forEach(n=>{
+        const rt=RELATION_TYPES[n.relationType||'neutral']||RELATION_TYPES.neutral;
+        const injName=(n.nameEn?.trim())||n.name.trim();
+        p+='\n── '+n.name.trim()+(injName!==n.name.trim()?' / '+injName:'');
+        p+='\n   Relationship: '+rt.label+' | Score: '+n.score+' / '+n.maxScore;
+        if(n.score<0) p+='\n   ⚠ NEGATIVE ZONE — hostile, distrustful or antagonistic toward the player';
+        if(n.description?.trim()&&!n.skipDescInject) p+='\n   Character: '+n.description.trim().slice(0,250);
+      });
+
+      p+='\n';
+      p+='\nBEHAVIOR RULES FOR EACH NPC:';
+      p+='\n• Portray each NPC according to their current relationship score and type';
+      p+='\n• Scores rise with warmth, help, shared moments, trust, humor, vulnerability';
+      p+='\n• Scores fall with rudeness, betrayal, lies, ignoring, cruelty, rejection';
+      p+='\n• Hostile NPCs (score < 0) are cold, suspicious, unfriendly — portray accordingly';
+      p+='\n• If SlowBurn is on, limit per-response change to ±2 per NPC (unless a strong story beat justifies more)';
+      p+='\n• Only update scores for NPCs who actually interact in the scene';
+      p+='\n';
+      p+='\nAT THE END OF EACH RESPONSE (only for NPCs whose values changed):';
+      p+='\n  <!-- [NPC_SCORE:EnglishName:X] -->   (X = new score, range: '+MIN_SCORE+' to max)';
+      p+='\n  <!-- [NPC_TYPE:EnglishName:key] -->   (key: '+rtKeys+', only when type becomes clear)';
+      p+='\nUse the EN name in tags. Do NOT include tags for NPCs not featured in this response.';
+      p+='\n═══════════════════════════════════════';
+    }
+  }
+
   return p;
 }
 
@@ -1248,7 +1793,122 @@ function onMessageReceived() {
         autoRegenAll();
       }
     }
+
+    // Групповой режим — парсинг NPC счётов и типов отношений
+    const gc=cfg();
+    if(gc.groupMode&&(chatLoveData().groupNpcs||[]).length>0){
+      const allNpcs=chatLoveData().groupNpcs;
+      let npcChanged=false;
+
+      // Счёт: <!-- [NPC_SCORE:Name:X] -->
+      const npcScoreMatches=[...text.matchAll(/<!--\s*\[NPC_SCORE:([^\]:]+):(-?\d+)\]\s*-->/gi)];
+      npcScoreMatches.forEach(m=>{
+        const name=m[1].trim(),newScore=parseInt(m[2],10);
+        const npc=allNpcs.find(n=>(n.nameEn||n.name).trim().toLowerCase()===name.toLowerCase()||n.name.trim().toLowerCase()===name.toLowerCase());
+        if(npc){
+          const old=npc.score;
+          npc.score=Math.max(MIN_SCORE,Math.min(newScore,npc.maxScore));
+          if(npc.score!==old){
+            const delta=npc.score-old;
+            toast('info',(npc.name||name)+': '+(delta>0?'+':'')+delta+' → '+npc.score);
+            npcChanged=true;
+          }
+        }
+      });
+
+      // Тип: <!-- [NPC_TYPE:Name:key] -->
+      const npcTypeMatches=[...text.matchAll(/<!--\s*\[NPC_TYPE:([^\]:]+):([\w]+)\]\s*-->/gi)];
+      npcTypeMatches.forEach(m=>{
+        const name=m[1].trim(),key=m[2].toLowerCase();
+        const npc=allNpcs.find(n=>(n.nameEn||n.name).trim().toLowerCase()===name.toLowerCase()||n.name.trim().toLowerCase()===name.toLowerCase());
+        if(npc&&RELATION_TYPES[key]&&key!==npc.relationType){
+          npc.relationType=key;
+          toast('info',(npc.name||name)+' → '+RELATION_TYPES[key].label);
+          npcChanged=true;
+        }
+      });
+
+      if(npcChanged){saveSettingsDebounced();renderGroupNpcs();}
+    }
   } catch(e){toast('error','Ошибка: '+e.message);}
+}
+
+// ─── Отладка ──────────────────────────────────────────────────────────────────
+function renderDebug() {
+  const ct=document.getElementById('ls-debug-content'); if(!ct) return;
+  const c=cfg(), d=chatLoveData();
+  const npcs=d.groupNpcs||[];
+  const rt=RELATION_TYPES[d.relationType||'neutral']||RELATION_TYPES.neutral;
+  const interp=getActiveInterp();
+  const pending=getPendingMilestones();
+  const prompt=cfg().isEnabled?buildPrompt():'(расширение отключено)';
+  const msgCtr=c._autoSuggestMsgCounter||0;
+  const interval=c.autoSuggestInterval||20;
+
+  // Блок 1 — текущее состояние
+  const statHTML=`
+    <div class="ls-debug-block">
+      <div class="ls-debug-label"><i class="fa-solid fa-gauge-high"></i> Текущее состояние</div>
+      <div class="ls-debug-stat-grid">
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:${rt.color};">${d.score} / ${d.maxScore}</span><span class="ls-debug-stat-key">Love Score</span></div>
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:${rt.color};">${escHtml(rt.label)}</span><span class="ls-debug-stat-key">Тип отношений</span></div>
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val">${escHtml(interp?.description?.slice(0,30)||'—')}</span><span class="ls-debug-stat-key">Активный диапазон</span></div>
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val">${pending.length}</span><span class="ls-debug-stat-key">Событий в очереди</span></div>
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.autoSuggestEnabled?msgCtr+' / '+interval:'выкл'}</span><span class="ls-debug-stat-key">Авто-реген</span></div>
+        <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.gradualProgression?'±2':'без огр.'}</span><span class="ls-debug-stat-key">SlowBurn</span></div>
+      </div>
+    </div>`;
+
+  // Блок 2 — NPC окружение
+  let npcHTML='';
+  if(c.groupMode&&npcs.length){
+    const rows=npcs.map(n=>{
+      const nrt=RELATION_TYPES[n.relationType||'neutral']||RELATION_TYPES.neutral;
+      return `<div class="ls-debug-npc-row">
+        <span class="ls-debug-npc-name">${escHtml(n.name)}${n.nameEn&&n.nameEn!==n.name?' <span style="opacity:.4;font-size:10px;">('+escHtml(n.nameEn)+')</span>':''}</span>
+        <span class="ls-debug-npc-rt" style="color:${nrt.color};">${escHtml(nrt.label)}</span>
+        <span class="ls-debug-npc-score" style="color:${n.score<0?'#4ec900':nrt.color};">${n.score}/${n.maxScore}</span>
+      </div>`;
+    }).join('');
+    npcHTML=`<div class="ls-debug-block">
+      <div class="ls-debug-label"><i class="fa-solid fa-users"></i> Окружение (${npcs.length} NPC)</div>
+      <div class="ls-debug-npc-state">${rows}</div>
+    </div>`;
+  } else if(c.groupMode){
+    npcHTML=`<div class="ls-debug-block"><div class="ls-debug-label"><i class="fa-solid fa-users"></i> Окружение</div><div style="font-size:11px;opacity:.3;padding:4px;">Нет NPC в текущем чате</div></div>`;
+  }
+
+  // Блок 3 — теги для AI
+  const tagsHTML=`<div class="ls-debug-block">
+    <div class="ls-debug-label"><i class="fa-solid fa-tags"></i> Теги в ответах AI <button class="menu_button ls-debug-copy" id="ls-debug-copy-tags" title="Скопировать"><i class="fa-solid fa-copy"></i></button></div>
+    <pre id="ls-debug-tags-text" style="font-size:10px;line-height:1.8;padding:8px;background:rgba(0,0,0,.3);border-radius:5px;border:1px solid rgba(255,255,255,.06);overflow-x:auto;color:rgba(160,220,255,.85);">${escHtml(
+      '<!-- [LOVE_SCORE:X] -->              — обновить счёт главного героя\n'
+      +'<!-- [RELATION_TYPE:key] -->          — установить тип отношений\n'
+      +'<!-- [MILESTONE:threshold] -->        — отметить романтическое событие выполненным\n'
+      +(c.groupMode&&npcs.length
+        ?'\n=== NPC Окружение ===\n'
+          +'<!-- [NPC_SCORE:EnName:X] -->         — обновить счёт NPC\n'
+          +'<!-- [NPC_TYPE:EnName:key] -->         — установить тип отношений NPC\n'
+          +'\nДоступные типы: '+Object.keys(RELATION_TYPES).join(' | ')
+        :'')
+    )}</pre>
+  </div>`;
+
+  // Блок 4 — полный промпт инжект
+  const promptHTML=`<div class="ls-debug-block">
+    <div class="ls-debug-label"><i class="fa-solid fa-code"></i> Текущий промпт-инжект <button class="menu_button ls-debug-copy" id="ls-debug-copy-prompt" title="Скопировать всё"><i class="fa-solid fa-copy"></i></button></div>
+    <textarea id="ls-debug-prompt" readonly>${escHtml(prompt)}</textarea>
+  </div>`;
+
+  ct.innerHTML=statHTML+npcHTML+tagsHTML+promptHTML;
+
+  document.getElementById('ls-debug-copy-prompt')?.addEventListener('click',()=>{
+    navigator.clipboard?.writeText(prompt).then(()=>toast('success','Промпт скопирован')).catch(()=>{});
+  });
+  document.getElementById('ls-debug-copy-tags')?.addEventListener('click',()=>{
+    const tagsEl=document.getElementById('ls-debug-tags-text');
+    navigator.clipboard?.writeText(tagsEl?.textContent||'').then(()=>toast('success','Теги скопированы')).catch(()=>{});
+  });
 }
 
 // ─── Sync UI ──────────────────────────────────────────────────────────────────
@@ -1277,12 +1937,18 @@ function syncUI() {
   const asEn=el('ls-autosuggest-enabled');if(asEn) asEn.checked=c.autoSuggestEnabled||false;
   const asInt=el('ls-autosuggest-interval');if(asInt) asInt.value=c.autoSuggestInterval||20;
   updateCharPreview(getCurrentCharacterCard());
-  renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();refreshWidget();
+  renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();
+  if(cfg().groupMode) renderGroupNpcs();
+  refreshWidget();
 }
 
 // ─── Основные события ─────────────────────────────────────────────────────────
 function bindMainEvents() {
-  $('#ls-enabled').off('change').on('change',function(){cfg().isEnabled=this.checked;saveSettingsDebounced();updatePromptInjection();refreshWidget();});
+  $('#ls-enabled').off('change').on('change',function(){
+    cfg().isEnabled=this.checked;
+    cfg()._savedEnabled=this.checked; // явный флаг — не теряется при сериализации
+    saveSettingsDebounced();updatePromptInjection();refreshWidget();
+  });
   $('#ls-val').off('change').on('change',function(){
     const d=loveData(),prev=d.score;
     d.score=Math.max(MIN_SCORE,Math.min(parseInt(this.value)||0,d.maxScore));
@@ -1380,6 +2046,45 @@ function bindMainEvents() {
     reader.onload=e=>{ importPresetFromJSON(e.target.result); this.value=''; };
     reader.readAsText(file,'utf-8');
   });
+
+  // Окружение NPC
+  $(document).off('change','#ls-group-enabled').on('change','#ls-group-enabled',function(){
+    cfg().groupMode=this.checked;
+    saveSettingsDebounced();updatePromptInjection();
+    const body=document.getElementById('ls-group-body');
+    if(body){body.style.display=this.checked?'':'none';}
+    if(this.checked) renderGroupNpcs();
+    toast('info',this.checked?'Режим окружения включён':'Режим окружения выключен');
+  });
+  $(document).off('click','#ls-npc-from-lorebook').on('click','#ls-npc-from-lorebook',function(){
+    const panel=document.getElementById('ls-lorebook-picker');
+    if(!panel) return;
+    const isOpen=panel.style.display!=='none';
+    if(isOpen){ panel.style.display='none'; return; }
+    panel.style.display='block';
+    renderLorebookPicker();
+  });
+  $(document).off('click','#ls-lb-close').on('click','#ls-lb-close',function(){
+    const panel=document.getElementById('ls-lorebook-picker');
+    if(panel) panel.style.display='none';
+  });
+  $(document).off('click','#ls-npc-add-manual').on('click','#ls-npc-add-manual',function(){
+    const d=chatLoveData(); if(!d.groupNpcs) d.groupNpcs=[];
+    d.groupNpcs.push(mkNpc({name:'Новый NPC'}));
+    saveGroupNpcs();renderGroupNpcs();
+  });
+  $(document).off('click','#ls-npc-scan-chat').on('click','#ls-npc-scan-chat',function(){
+    scanChatForNpcs();
+  });
+  // Открытие аккордеона группы
+  $(document).off('click','#ls-acc-group .inline-drawer-toggle').on('click','#ls-acc-group .inline-drawer-toggle',function(){
+    setTimeout(()=>{ if(cfg().groupMode) renderGroupNpcs(); },50);
+  });
+  // Открытие отладки — рендерим содержимое
+  $(document).off('click','#ls-acc-debug .inline-drawer-toggle').on('click','#ls-acc-debug .inline-drawer-toggle',function(){
+    setTimeout(renderDebug, 80);
+  });
+  $(document).off('click','#ls-debug-refresh-btn').on('click','#ls-debug-refresh-btn',renderDebug);
 }
 
 // ─── Инициализация ────────────────────────────────────────────────────────────
@@ -1387,12 +2092,16 @@ jQuery(()=>{
   try {
     if(!extension_settings[EXT_NAME]) extension_settings[EXT_NAME]=structuredClone(defaultSettings);
     const c=cfg();
-    for(const [k,v] of Object.entries(defaultSettings)) if(c[k]===undefined) c[k]=structuredClone(v);
-    if(c.isEnabled===false&&!c._wasManuallyDisabled) c.isEnabled=true;
+    const _savedEnabled = c.isEnabled; // сохраняем ДО того как цикл может затронуть
+    for(const [k,v] of Object.entries(defaultSettings)) if(k!=='isEnabled'&&c[k]===undefined) c[k]=structuredClone(v);
+    // isEnabled: если было явно сохранено false — оставляем false, иначе true по умолчанию
+    c.isEnabled = (_savedEnabled===false) ? false : true;
     if(c.widgetPos&&c.widgetPos.top==null) c.widgetPos=null;
     if(!c.presets) c.presets=[];
     if(!c.genScope) c.genScope={...defaultSettings.genScope};
     if(!c.heartStyle) c.heartStyle='svg';
+    if(!c.groupNpcs) c.groupNpcs=[];
+    if(c.groupMode==null) c.groupMode=false;
 
     $('#extensions_settings').append(settingsPanelHTML());
     createWidget(); bindMainEvents(); syncUI(); updatePromptInjection();
