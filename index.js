@@ -7,14 +7,16 @@ const MIN_SCORE  = -100;
 
 const defaultSettings = {
   isEnabled: true, maxScore: 100, gradualProgression: true,
-  widgetPos: null, widgetSize: 64,
+  widgetPos: null, widgetSize: 64, heartStyle: 'svg',
   lastCheckedMessageId: null, chatLoveData: {},
   genEndpoint: '', genApiKey: '', genModel: '', genLang: 'ru', genUserNotes: '',
   genScope: { changes: true, positiveRanges: true, negativeRanges: true, milestones: true, suggestedMax: true },
   chatAnalysisMsgCount: 20,
-  presets: []
+  presets: [],
+  autoSuggestEnabled: false,
+  autoSuggestInterval: 20,
+  _autoSuggestMsgCounter: 0,
 };
-
 
 // ─── Цветовые хелперы ────────────────────────────────────────────────────────
 function _h2r(hex){
@@ -23,9 +25,9 @@ function _h2r(hex){
 }
 function _lerpHex(a,b,t){
   const [r1,g1,b1]=_h2r(a),[r2,g2,b2]=_h2r(b);
-  const r=v=>Math.round(r1+t*(r2-r1)).toString(16).padStart(2,'0');
   return '#'+[r1+t*(r2-r1),g1+t*(g2-g1),b1+t*(b2-b1)].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
 }
+
 // ─── Типы отношений ───────────────────────────────────────────────────────────
 const RELATION_TYPES = {
   neutral:    { label: 'Нейтрально',  color: '#d0d0d0', deep: '#888888', desc: 'Тип не определён. Отношения только начинаются.' },
@@ -37,6 +39,7 @@ const RELATION_TYPES = {
   obsession:  { label: 'Одержимость', color: '#a855f7', deep: '#5c00b0', desc: 'Всепоглощающая фиксация. Тёмная, болезненная привязанность.' },
   hostile:    { label: 'Ненависть',   color: '#2e8b00', deep: '#050f00', desc: 'Открытая ненависть и враждебность. Перевёрнутое сердце — символ ненависти.' },
 };
+
 const mkLoveData = () => ({
   score: 0, maxScore: 100, relationType: 'neutral', scoreLog: [],
   scoreChanges: [
@@ -63,7 +66,6 @@ const mkLoveData = () => ({
   ]
 });
 
-
 const cfg = () => extension_settings[EXT_NAME];
 
 function toast(type, msg) {
@@ -82,10 +84,10 @@ function ensureLDFields(d) {
   if (!d.milestones)           d.milestones           = mk.milestones;
   if (!d.scoreLog)             d.scoreLog             = [];
   if (d.maxScore == null)      d.maxScore             = mk.maxScore;
+  if (!d.relationType)         d.relationType         = 'neutral';
   return d;
 }
 
-// Всегда текущий чат — для промпта и виджета
 function chatLoveData() {
   const c = cfg();
   if (!c.chatLoveData) c.chatLoveData = {};
@@ -94,12 +96,10 @@ function chatLoveData() {
   return ensureLDFields(c.chatLoveData[id]);
 }
 
-function loveData() {
-  return chatLoveData();
-}
+function loveData() { return chatLoveData(); }
 
 function escHtml(s) {
-  return String(s ?? '').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function getActiveInterp() {
@@ -112,6 +112,7 @@ function getPendingMilestones() {
   return (d.milestones || []).filter(m => !m.done && d.score >= m.threshold);
 }
 
+// ─── Цвета сердца (SVG стиль) ─────────────────────────────────────────────────
 function heartColor(score, max, rt='neutral') {
   const _t=RELATION_TYPES[rt]||RELATION_TYPES.neutral;
   const r=Math.max(0,Math.min(1,Math.abs(score)/(score>=0?max:100)));
@@ -130,8 +131,8 @@ function heartStroke(score, rt='neutral') {
   if (score >= 0) {
     const r=Math.max(0,Math.min(1,score/(loveData().maxScore||100)));
     if (r<0.15) return 'rgba(200,200,200,.35)';
-    return (RELATION_TYPES[rt]||RELATION_TYPES.romance).color.replace('#','rgba(')
-      .replace(/(..)(..)(..)$/,(_,r,g,b)=>`rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)},.5)`);
+    const [r1,g1,b1]=_h2r((RELATION_TYPES[rt]||RELATION_TYPES.romance).color);
+    return `rgba(${r1},${g1},${b1},.5)`;
   }
   const r=Math.abs(score)/100;
   if (r>=0.75) return 'rgba(5,25,0,.95)';
@@ -139,9 +140,25 @@ function heartStroke(score, rt='neutral') {
   return 'rgba(80,200,0,.6)';
 }
 
+// ─── Цвета сердца (Blur стиль) ────────────────────────────────────────────────
+function heartColorRgba(score, max, rt='neutral') {
+  const t = RELATION_TYPES[rt] || RELATION_TYPES.neutral;
+  const ratio = Math.max(0, Math.min(1, Math.abs(score) / (score >= 0 ? max : 100)));
+  if (rt === 'hostile') {
+    const [r,g,b] = _h2r('#0a8c3a');
+    return `rgba(${r},${g},${b},${0.15 + ratio * 0.85})`;
+  }
+  if (score >= 0) {
+    const [r,g,b] = _h2r(t.color);
+    return `rgba(${r},${g},${b},${0.15 + ratio * 0.85})`;
+  } else {
+    const [r,g,b] = _h2r('#4ec900');
+    return `rgba(${r},${g},${b},${0.15 + ratio * 0.85})`;
+  }
+}
+
 function addToLog(d, delta, reason) {
   if (!d.scoreLog) d.scoreLog = [];
-  if (!d.relationType) d.relationType = 'neutral';
   const sign = delta >= 0 ? '+' : '';
   d.scoreLog.unshift({ delta, sign: sign + delta, reason: reason || '' });
   if (d.scoreLog.length > 10) d.scoreLog.length = 10;
@@ -177,22 +194,22 @@ function savePreset(name) {
 function applyPresetData(src, mode, sections) {
   const d = loveData();
   if (mode === 'replace') {
-    if (sections.changes)  d.scoreChanges         = JSON.parse(JSON.stringify(src.scoreChanges         || []));
-    if (sections.ranges)   d.scaleInterpretations = JSON.parse(JSON.stringify(src.scaleInterpretations || []));
-    if (sections.milestones) d.milestones         = JSON.parse(JSON.stringify(src.milestones           || []));
-    if (sections.maxScore) { d.maxScore = src.maxScore || d.maxScore; cfg().maxScore = d.maxScore; }
+    if (sections.changes)    d.scoreChanges         = JSON.parse(JSON.stringify(src.scoreChanges         || []));
+    if (sections.ranges)     d.scaleInterpretations = JSON.parse(JSON.stringify(src.scaleInterpretations || []));
+    if (sections.milestones) d.milestones           = JSON.parse(JSON.stringify(src.milestones           || []));
+    if (sections.maxScore)   { d.maxScore = src.maxScore || d.maxScore; cfg().maxScore = d.maxScore; }
   } else {
     if (sections.changes) {
-      const existing = new Set(d.scoreChanges.map(x => x.delta + '|' + x.description));
-      (src.scoreChanges || []).forEach(x => { if (!existing.has(x.delta + '|' + x.description)) d.scoreChanges.push(JSON.parse(JSON.stringify(x))); });
+      const existing = new Set(d.scoreChanges.map(x => x.delta+'|'+x.description));
+      (src.scoreChanges||[]).forEach(x => { if(!existing.has(x.delta+'|'+x.description)) d.scoreChanges.push(JSON.parse(JSON.stringify(x))); });
     }
     if (sections.ranges) {
-      const existing = new Set(d.scaleInterpretations.map(x => x.min + '|' + x.max));
-      (src.scaleInterpretations || []).forEach(x => { if (!existing.has(x.min + '|' + x.max)) d.scaleInterpretations.push(JSON.parse(JSON.stringify(x))); });
+      const existing = new Set(d.scaleInterpretations.map(x => x.min+'|'+x.max));
+      (src.scaleInterpretations||[]).forEach(x => { if(!existing.has(x.min+'|'+x.max)) d.scaleInterpretations.push(JSON.parse(JSON.stringify(x))); });
     }
     if (sections.milestones) {
       const existing = new Set(d.milestones.map(x => x.threshold));
-      (src.milestones || []).forEach(x => { if (!existing.has(x.threshold)) d.milestones.push(JSON.parse(JSON.stringify(x))); });
+      (src.milestones||[]).forEach(x => { if(!existing.has(x.threshold)) d.milestones.push(JSON.parse(JSON.stringify(x))); });
     }
   }
   saveSettingsDebounced(); updatePromptInjection(); syncUI();
@@ -218,15 +235,12 @@ function deletePreset(id) {
 }
 
 function exportPresetJSON(src) {
-  const json = JSON.stringify(src, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'ls-preset-' + (src.name || 'preset').replace(/[^a-zа-яё0-9_-]/gi, '_').slice(0, 40) + '.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  toast('success', 'Скачиваю «' + (src.name || 'preset') + '.json»');
+  const blob = new Blob([JSON.stringify(src, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ls-preset-' + (src.name||'preset').replace(/[^a-zа-яё0-9_-]/gi,'_').slice(0,40) + '.json';
+  a.click(); URL.revokeObjectURL(a.href);
+  toast('success', 'Скачиваю «' + (src.name||'preset') + '.json»');
 }
 
 function importPresetFromJSON(json) {
@@ -238,8 +252,7 @@ function importPresetFromJSON(json) {
     const c = cfg();
     if (!c.presets) c.presets = [];
     c.presets.push(src);
-    saveSettingsDebounced();
-    renderPresets();
+    saveSettingsDebounced(); renderPresets();
     toast('success', 'Пресет «' + src.name + '» импортирован');
   } catch(e) { toast('error', 'Неверный JSON: ' + e.message); }
 }
@@ -251,15 +264,16 @@ function autoSnapshot(reason) {
   const autoSnaps = c.presets.filter(p => p.name.startsWith('🔄'));
   if (autoSnaps.length >= 5) c.presets.splice(c.presets.indexOf(autoSnaps[0]), 1);
   c.presets.push(snapshotCurrentData('🔄 ' + name));
-  saveSettingsDebounced();
-  renderPresets();
+  saveSettingsDebounced(); renderPresets();
 }
 
+// ─── Стили ────────────────────────────────────────────────────────────────────
 function injectStyles() {
   if (document.getElementById('ls-styles')) return;
   const el = document.createElement('style');
   el.id = 'ls-styles';
   el.textContent = `
+/* ── Widget ── */
 #ls-widget {
   position:fixed;top:100px;left:18px;bottom:auto;right:auto;
   width:64px;height:60px;cursor:grab;z-index:999999;
@@ -274,15 +288,33 @@ function injectStyles() {
 @keyframes ls-hb{0%{transform:scale(1)}40%{transform:scale(1.30)}70%{transform:scale(.92)}100%{transform:scale(1)}}
 @keyframes ls-flip-anim{0%{transform:scaleY(1)}35%{transform:scaleY(0) scale(1.15)}65%{transform:scaleY(0) scale(1.15)}100%{transform:scaleY(1)}}
 #ls-heart-fill{transition:y .6s ease,height .6s ease,fill .5s ease;}
-#ls-status-tip{
-  position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
-  background:var(--black-tint-5,rgba(18,18,22,.97));
-  border:1px solid var(--border-color,rgba(255,255,255,.1));border-radius:6px;
-  padding:6px 10px;font-size:11px;color:var(--SmartThemeBodyColor,#ccc);
+
+/* ── Общий тултип для обоих видов сердца ── */
+#ls-status-tip, .ls-tip{
+  position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+  background:rgba(18,18,22,.96);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.1);border-radius:8px;
+  padding:7px 11px;font-size:11px;line-height:1.5;color:rgba(255,255,255,.8);
   pointer-events:none;opacity:0;white-space:normal;text-align:center;
-  max-width:190px;min-width:90px;transition:opacity .18s ease;z-index:1000000;line-height:1.5;
+  max-width:210px;min-width:90px;transition:opacity .18s ease;z-index:1000000;
 }
-#ls-widget:hover #ls-status-tip{opacity:1;}
+#ls-widget:hover #ls-status-tip, #ls-widget:hover .ls-tip{opacity:1;}
+.ls-tip-type{font-weight:700;margin-bottom:3px;font-size:12px;}
+.ls-tip-desc{font-size:10px;opacity:.75;line-height:1.45;}
+
+/* ── Blur heart widget ── */
+.ls-heart-wrap{position:relative;width:100%;height:100%;}
+.ls-heart-blur{position:absolute;inset:0;transition:filter .4s ease;}
+.ls-heart-blur svg{display:block;width:100%;height:100%;overflow:visible;}
+.ls-heart-blur path{transition:fill .5s ease;}
+.ls-heart-score{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;pointer-events:none;z-index:2;
+}
+.ls-heart-num{font-size:16px;font-weight:800;line-height:1;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.6),0 0 20px rgba(0,0,0,.3);}
+.ls-heart-denom{font-size:9px;line-height:1;margin-top:1px;color:rgba(255,255,255,.6);text-shadow:0 1px 4px rgba(0,0,0,.5);}
+
+/* ── Panel shared ── */
 .ls-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
 .ls-section-title{font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--SmartThemeBodyColor,#aaa);opacity:.55;margin:14px 0 5px;padding-bottom:4px;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));}
 .ls-hint{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.4;line-height:1.5;margin-bottom:6px;}
@@ -292,14 +324,18 @@ function injectStyles() {
 .ls-range-input:focus{outline:none;border-color:var(--SmartThemeBodyColor,rgba(255,255,255,.4));}
 .ls-textarea-field{flex:1;resize:vertical;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.1));border-radius:4px;color:var(--SmartThemeBodyColor,#eee);padding:6px 8px;font-family:inherit;font-size:12px;line-height:1.55;box-sizing:border-box;min-height:52px;transition:border-color .15s;}
 .ls-textarea-field:focus{outline:none;border-color:var(--SmartThemeBodyColor,rgba(255,255,255,.35));}
-.ls-card{display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;padding:8px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.02));border:1px solid var(--border-color,rgba(255,255,255,.08));}
-.ls-card-pos{border-left:3px solid rgba(80,200,120,.5);}
-.ls-card-neg{border-left:3px solid rgba(210,80,80,.5);}
-.ls-card-neu{border-left:3px solid rgba(120,120,200,.35);}
-.ls-card-milestone{border-left:3px solid rgba(200,160,80,.4);}
+
+/* ── Cards ── */
+.ls-card{display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;padding:8px;border-radius:6px;border:1px solid var(--border-color,rgba(255,255,255,.08));}
+.ls-card-pos{background:rgba(255,180,200,.04);border-color:rgba(255,150,180,.15);}
+.ls-card-neg{background:rgba(40,40,50,.3);border-color:rgba(80,80,100,.2);}
+.ls-card-neu{background:var(--input-background-fill,rgba(255,255,255,.02));}
+.ls-card-milestone{background:rgba(255,220,160,.04);border-color:rgba(220,180,120,.15);}
 .ls-card-milestone.ls-done{opacity:.4;}
 .ls-heart-box{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:44px;}
-.ls-heart-icon{font-size:18px;line-height:1;}
+.ls-heart-icon{font-size:18px;line-height:1;display:block;}
+.ls-heart-icon.ls-icon-pos{color:rgba(255,100,140,.85);filter:drop-shadow(0 0 4px rgba(255,80,120,.4));}
+.ls-heart-icon.ls-icon-neg{color:rgba(110,110,155,.75);}
 .ls-del-btn{padding:3px 7px!important;min-width:unset!important;align-self:flex-start;opacity:.35;transition:opacity .15s;}
 .ls-del-btn:hover{opacity:.8;}
 .ls-range-box{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:148px;}
@@ -318,9 +354,17 @@ function injectStyles() {
 #ls-active-state{margin-bottom:8px;padding:8px 10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.1));font-size:12px;line-height:1.55;color:var(--SmartThemeBodyColor,#ccc);}
 #ls-active-state strong{opacity:.7;}
 input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#aaa);}
-/* Preset box */
-#ls-preset-box{margin-top:10px;padding:10px;border-radius:6px;border:1px solid var(--border-color,rgba(255,255,255,.1));}
-#ls-preset-box .ls-section-title{margin-top:0;margin-bottom:8px;}
+
+/* ── Relation type buttons ── */
+.ls-rel-type-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:4px 0;flex-wrap:nowrap;}
+.ls-rel-type-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;cursor:pointer;opacity:.22;transition:opacity .15s,filter .15s;user-select:none;flex-shrink:0;}
+.ls-rel-type-btn:hover{opacity:.6;}
+.ls-rel-type-btn.ls-rt-active{opacity:1;filter:drop-shadow(0 2px 8px currentColor);}
+#ls-type-info{display:none;font-size:11px;line-height:1.55;padding:7px 10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.04));border:1px solid var(--border-color,rgba(255,255,255,.1));color:var(--SmartThemeBodyColor,#ccc);margin-bottom:6px;}
+.ls-rt-neutral{color:#c0c0c0}.ls-rt-romance{color:#ff2d55}.ls-rt-friendship{color:#ff9d2e}.ls-rt-family{color:#f0c000}.ls-rt-platonic{color:#00c49a}.ls-rt-rival{color:#2979ff}.ls-rt-obsession{color:#a855f7}.ls-rt-hostile{color:#2e8b00}
+.ls-rel-type-label{font-size:11px;opacity:.45;color:var(--SmartThemeBodyColor,#aaa);margin-left:4px;min-width:70px;}
+
+/* ── Preset box ── */
 .ls-preset-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px;padding:7px 9px;border-radius:5px;background:var(--input-background-fill,rgba(255,255,255,.02));border:1px solid var(--border-color,rgba(255,255,255,.08));}
 .ls-preset-row.ls-preset-snap{border-left:3px solid rgba(100,180,100,.35);opacity:.7;}
 .ls-preset-info{flex:1;min-width:0;}
@@ -328,13 +372,11 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 .ls-preset-meta{font-size:10px;opacity:.35;margin-top:1px;}
 .ls-preset-actions{display:flex;gap:4px;flex-shrink:0;}
 .ls-preset-btn{padding:3px 7px!important;min-width:unset!important;font-size:11px!important;}
-/* Load mode */
 #ls-load-mode-box{padding:8px;border-radius:5px;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.08));margin-bottom:8px;}
 .ls-load-mode-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px;}
 .ls-load-checks{display:flex;gap:8px;flex-wrap:wrap;}
-/* AI box */
-#ls-ai-box{margin-top:12px;padding:10px;border-radius:6px;border:1px solid var(--border-color,rgba(255,255,255,.1));}
-#ls-ai-box .ls-section-title{margin-top:0;margin-bottom:8px;}
+
+/* ── AI box ── */
 .ls-api-label{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;margin:6px 0 3px;display:block;}
 .ls-api-field{width:100%;box-sizing:border-box;background:var(--input-background-fill,rgba(255,255,255,.04));border:1px solid var(--border-color,rgba(255,255,255,.1));border-radius:4px;color:var(--SmartThemeBodyColor,#eee);padding:5px 8px;font-size:12px;transition:border-color .15s;}
 .ls-api-field:focus{outline:none;border-color:var(--SmartThemeBodyColor,rgba(255,255,255,.35));}
@@ -349,25 +391,34 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 #ls-char-avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid var(--border-color,rgba(255,255,255,.2));flex-shrink:0;background:var(--input-background-fill,rgba(255,255,255,.06));transition:opacity .2s;box-shadow:0 2px 10px rgba(0,0,0,.4);}
 #ls-char-avatar.ls-avatar-hidden{display:none;}
 #ls-char-avatar-name{font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#eee);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;}
-#ls-gen-btn{width:100%;margin-top:4px;}
 #ls-gen-status{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:15px;line-height:1.4;}
-#ls-score-log{margin-top:4px;}
-.ls-rel-type-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:4px 0;flex-wrap:nowrap;}.ls-rel-type-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;cursor:pointer;opacity:.22;transition:opacity .15s,filter .15s;user-select:none;flex-shrink:0;}.ls-rel-type-btn:hover{opacity:.6;}.ls-rel-type-btn.ls-rt-active{opacity:1;filter:drop-shadow(0 2px 8px currentColor);}#ls-type-info{display:none;font-size:11px;line-height:1.55;padding:7px 10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.04));border:1px solid var(--border-color,rgba(255,255,255,.1));color:var(--SmartThemeBodyColor,#ccc);margin-bottom:6px;}.ls-rt-neutral{color:#c0c0c0;}.ls-rt-romance{color:#ff2d55;}.ls-rt-friendship{color:#ff9d2e;}.ls-rt-family{color:#f0c000;}.ls-rt-platonic{color:#00c49a;}.ls-rt-rival{color:#2979ff;}.ls-rt-obsession{color:#a855f7;}.ls-rt-hostile{color:#2e8b00;}.ls-rel-type-label{font-size:11px;opacity:.45;color:var(--SmartThemeBodyColor,#aaa);margin-left:4px;min-width:70px;}
-.ls-analyze-reltype{display:flex;align-items:center;padding:6px 0 8px 0;margin-bottom:4px;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));}
+
+/* ── Score log ── */
+.ls-log-entry{display:flex;align-items:center;gap:8px;padding:4px 8px;margin-bottom:2px;border-radius:4px;font-size:11px;}
+.ls-log-delta{font-size:12px;font-weight:800;min-width:36px;white-space:nowrap;}
+.ls-log-reason{color:var(--SmartThemeBodyColor,#ccc);opacity:.7;line-height:1.4;}
+.ls-log-clear{padding:2px 8px!important;min-width:unset!important;font-size:10px!important;opacity:.4;}
+.ls-log-clear:hover{opacity:.8;}
+
+/* ── Analyze ── */
 #ls-analyze-result{margin-top:8px;padding:10px;border-radius:6px;background:var(--input-background-fill,rgba(255,255,255,.03));border:1px solid var(--border-color,rgba(255,255,255,.12));display:none;}
 .ls-analyze-score{font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#eee);margin-bottom:6px;}
 .ls-analyze-text{font-size:12px;line-height:1.55;color:var(--SmartThemeBodyColor,#ccc);opacity:.85;margin-bottom:5px;}
 .ls-analyze-reason{font-size:11px;line-height:1.4;color:var(--SmartThemeBodyColor,#aaa);opacity:.55;font-style:italic;}
+.ls-analyze-reltype{display:flex;align-items:center;padding:6px 0 8px 0;margin-bottom:4px;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));}
 
-.ls-log-clear{padding:2px 8px!important;min-width:unset!important;font-size:10px!important;opacity:.4;}
-.ls-log-clear:hover{opacity:.8;}
+/* ── Auto-suggest box ── */
+#ls-autosuggest-result{margin-top:8px;padding:10px;border-radius:6px;background:rgba(255,200,100,.04);border:1px dashed rgba(255,200,100,.25);display:none;font-size:12px;line-height:1.6;color:var(--SmartThemeBodyColor,#ccc);}
+#ls-autosuggest-result .ls-as-title{font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;opacity:.5;margin-bottom:6px;}
 `;
   document.head.appendChild(el);
 }
 
+// ─── Построение SVG сердца ────────────────────────────────────────────────────
+const HEART_P = 'M50,85 C50,85 8,58 8,32 C8,16 20,6 34,6 C43,6 49,11 50,16 C51,11 57,6 66,6 C80,6 92,16 92,32 C92,58 50,85 50,85 Z';
+
 function buildHeartSVG(score, max, rt='neutral') {
   const isNeg = score < 0;
-  const P = 'M50,85 C50,85 8,58 8,32 C8,16 20,6 34,6 C43,6 49,11 50,16 C51,11 57,6 66,6 C80,6 92,16 92,32 C92,58 50,85 50,85 Z';
   const col = heartColor(score, max, rt), stroke = heartStroke(score, rt);
   let fillY, fillH, tr = '';
   if (!isNeg) {
@@ -379,13 +430,54 @@ function buildHeartSVG(score, max, rt='neutral') {
   }
   const fs = Math.abs(score) >= 100 ? '13' : '17';
   return '<svg viewBox="0 0 100 95" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;overflow:visible;">'
-    + '<defs><clipPath id="ls-hclip"><path ' + tr + ' d="' + P + '"/></clipPath></defs>'
-    + '<path ' + tr + ' d="' + P + '" fill="rgba(22,10,16,.88)" stroke="' + stroke + '" stroke-width="2.5"/>'
+    + '<defs><clipPath id="ls-hclip"><path ' + tr + ' d="' + HEART_P + '"/></clipPath></defs>'
+    + '<path ' + tr + ' d="' + HEART_P + '" fill="rgba(22,10,16,.88)" stroke="' + stroke + '" stroke-width="2.5"/>'
     + '<rect x="0" y="0" width="100" height="95" clip-path="url(#ls-hclip)" fill="'+(RELATION_TYPES[rt]||RELATION_TYPES.neutral).color+'" opacity="0.13"/>'
     + '<rect id="ls-heart-fill" x="0" y="' + fillY + '" width="100" height="' + fillH + '" clip-path="url(#ls-hclip)" fill="' + col + '" opacity="0.92"/>'
     + '<text id="ls-score-main" x="50" y="43" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="' + fs + '" font-weight="700" font-family="system-ui,sans-serif">' + escHtml(String(score)) + '</text>'
     + '<text id="ls-score-denom" x="50" y="62" text-anchor="middle" dominant-baseline="middle" fill="rgba(255,255,255,.6)" font-size="10" font-family="system-ui,sans-serif">/' + escHtml(String(max)) + '</text>'
-    + '</svg><div id="ls-status-tip"></div>';
+    + '</svg>' + buildTipHTML(rt) + '';
+}
+
+// ─── Единый тултип для обоих сердец ──────────────────────────────────────────
+function buildTipHTML(rt) {
+  const rtInfo = RELATION_TYPES[rt] || RELATION_TYPES.neutral;
+  const interp = getActiveInterp();
+  const descText = interp?.description?.trim() || '';
+  return '<div id="ls-status-tip">'
+    + '<div class="ls-tip-type" style="color:' + rtInfo.color + ';">' + escHtml(rtInfo.label) + '</div>'
+    + (descText ? '<div class="ls-tip-desc">' + escHtml(descText) + '</div>' : '')
+    + '</div>';
+}
+
+// ─── Построение Blur сердца ───────────────────────────────────────────────────
+const BLUR_HEART_P = 'M50 88 C50 88 6 56 6 30 C6 14 18 4 32 4 C42 4 48 10 50 15 C52 10 58 4 68 4 C82 4 94 14 94 30 C94 56 50 88 50 88 Z';
+
+function buildBlurHeart(score, max, rt='neutral') {
+  const isNeg = score < 0, isHostile = rt === 'hostile';
+  const shouldFlip = isNeg || isHostile;
+  const color = heartColorRgba(score, max, rt);
+  const rtInfo = RELATION_TYPES[rt] || RELATION_TYPES.neutral;
+  const sz = cfg().widgetSize || 64;
+  const blur = Math.max(3, Math.min(7, Math.round(sz * 0.06)));
+  const tr = shouldFlip ? ` transform="rotate(180,50,46)"` : '';
+  const interp = getActiveInterp();
+  const descText = interp?.description?.trim() || '';
+  return `<div class="ls-heart-wrap">
+    <div class="ls-heart-blur" style="filter:blur(${blur}px)">
+      <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg">
+        <path d="${BLUR_HEART_P}"${tr} fill="${color}"/>
+      </svg>
+    </div>
+    <div class="ls-heart-score">
+      <span class="ls-heart-num">${score}</span>
+      <span class="ls-heart-denom">/${max}</span>
+    </div>
+    <div class="ls-tip">
+      <div class="ls-tip-type" style="color:${rtInfo.color}">${escHtml(rtInfo.label)}</div>
+      ${descText ? `<div class="ls-tip-desc">${escHtml(descText)}</div>` : ''}
+    </div>
+  </div>`;
 }
 
 function applyWidgetSize(sz) {
@@ -395,34 +487,43 @@ function applyWidgetSize(sz) {
 
 function clamp(val, lo, hi) { return Math.max(lo, Math.min(hi, val)); }
 
-function setWidgetSign(isNeg) {
-  const w = document.getElementById('ls-widget'); if (!w) return;
-  if (isNeg) w.classList.add('ls-neg'); else w.classList.remove('ls-neg');
-}
-
 function updateWidgetGlow(rt, isNeg) {
   const _tc = isNeg ? [60,220,60] : _h2r((RELATION_TYPES[rt]||RELATION_TYPES.neutral).color);
   const [r,g,b] = _tc;
-  const a1=isNeg?.4:.3, a2=isNeg?.75:.55;
-  document.documentElement.style.setProperty('--ls-glow',   `drop-shadow(0 4px 14px rgba(${r},${g},${b},${a1}))`);
-  document.documentElement.style.setProperty('--ls-hover-glow',`drop-shadow(0 6px 22px rgba(${r},${g},${b},${a2}))`);
+  document.documentElement.style.setProperty('--ls-glow',        `drop-shadow(0 4px 14px rgba(${r},${g},${b},.3))`);
+  document.documentElement.style.setProperty('--ls-hover-glow',  `drop-shadow(0 6px 22px rgba(${r},${g},${b},.55))`);
 }
+
 function createWidget() {
   if (document.getElementById('ls-widget')) return;
   injectStyles();
   const d = loveData(), c = cfg();
   const w = document.createElement('div'); w.id = 'ls-widget';
-  w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'neutral');
+  _renderWidgetContent(w);
   document.body.appendChild(w);
-  const sz = c.widgetSize || 64; applyWidgetSize(sz); setWidgetSign(d.score < 0);
+  const sz = c.widgetSize || 64; applyWidgetSize(sz);
   updateWidgetGlow(d.relationType||'neutral', d.score<0);
   if (c.widgetPos?.top != null) {
     const st = parseFloat(c.widgetPos.top), sl = parseFloat(c.widgetPos.left);
-    w.style.top  = clamp(isNaN(st) ? 100 : st, 8, window.innerHeight - Math.round(sz*.94) - 8) + 'px';
-    w.style.left = clamp(isNaN(sl) ?  18 : sl, 8, window.innerWidth  - sz - 8) + 'px';
+    w.style.top  = clamp(isNaN(st)?100:st, 8, window.innerHeight - Math.round(sz*.94) - 8) + 'px';
+    w.style.left = clamp(isNaN(sl)?18:sl,  8, window.innerWidth  - sz - 8) + 'px';
     w.style.bottom = 'auto'; w.style.right = 'auto';
   }
   makeDraggable(w);
+}
+
+function _renderWidgetContent(w) {
+  if (!w) return;
+  const d = loveData(), c = cfg();
+  const style = c.heartStyle || 'svg';
+  if (style === 'blur') {
+    w.innerHTML = buildBlurHeart(d.score, d.maxScore, d.relationType||'neutral');
+    // blur heart manages its own glow via tip
+    w.style.filter = '';
+  } else {
+    w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'neutral');
+    updateWidgetGlow(d.relationType||'neutral', d.score<0);
+  }
 }
 
 function makeDraggable(w) {
@@ -430,58 +531,29 @@ function makeDraggable(w) {
   w.addEventListener('pointerdown', e => {
     const r = w.getBoundingClientRect(); grabX = e.clientX-r.left; grabY = e.clientY-r.top;
     drag = true; moved = false; w.setPointerCapture(e.pointerId);
-    w.style.transition = 'none';
-    const _drt=loveData().relationType||'neutral';
-    const _dc=loveData().score<0?[60,255,60]:_h2r((RELATION_TYPES[_drt]||RELATION_TYPES.neutral).color);
-    w.style.filter=`drop-shadow(0 8px 28px rgba(${_dc[0]},${_dc[1]},${_dc[2]},.75))`;
-    e.preventDefault();
+    w.style.transition = 'none'; e.preventDefault();
   });
   w.addEventListener('pointermove', e => {
     if (!drag) return;
-    const dx = Math.abs(e.clientX - (w.getBoundingClientRect().left + grabX));
-    const dy = Math.abs(e.clientY - (w.getBoundingClientRect().top  + grabY));
-    if (!moved && (dx > 4 || dy > 4)) moved = true;
+    const dx = Math.abs(e.clientX-(w.getBoundingClientRect().left+grabX));
+    const dy = Math.abs(e.clientY-(w.getBoundingClientRect().top+grabY));
+    if (!moved && (dx>4||dy>4)) moved = true;
     if (!moved) return;
-    w.style.left = clamp(e.clientX-grabX, 8, window.innerWidth -w.offsetWidth -8) + 'px'; w.style.right  = 'auto';
-    w.style.top  = clamp(e.clientY-grabY, 8, window.innerHeight-w.offsetHeight-8) + 'px'; w.style.bottom = 'auto';
+    w.style.left = clamp(e.clientX-grabX,8,window.innerWidth-w.offsetWidth-8)+'px'; w.style.right='auto';
+    w.style.top  = clamp(e.clientY-grabY,8,window.innerHeight-w.offsetHeight-8)+'px'; w.style.bottom='auto';
     e.preventDefault();
   });
   w.addEventListener('pointerup', () => {
     if (!drag) return; drag = false;
     w.style.transition = 'filter .2s ease,transform .35s ease'; w.style.filter = '';
-    if (moved) { cfg().widgetPos = { top: w.style.top, left: w.style.left }; saveSettingsDebounced(); }
+    if (moved) { cfg().widgetPos = { top:w.style.top, left:w.style.left }; saveSettingsDebounced(); }
   });
 }
 
 function refreshWidget() {
-  const c = cfg(), d = chatLoveData(), w = document.getElementById('ls-widget'); if (!w) return;
+  const c = cfg(), w = document.getElementById('ls-widget'); if (!w) return;
   w.style.display = c.isEnabled ? 'block' : 'none';
-  setWidgetSign(d.score < 0);
-  const fill = document.getElementById('ls-heart-fill');
-  const main = document.getElementById('ls-score-main');
-  const denom= document.getElementById('ls-score-denom');
-  if (fill && main && denom) {
-    const isNeg = d.score < 0;
-    let fillY, fillH;
-    if (!isNeg) { const r = Math.max(0,Math.min(1,d.score/d.maxScore)); fillY=(95*(1-r)).toFixed(2); fillH=(95*r).toFixed(2); }
-    else { const r=Math.max(0,Math.min(1,Math.abs(d.score)/100)); fillY='0'; fillH=(95*r).toFixed(2); }
-    fill.setAttribute('y', fillY); fill.setAttribute('height', fillH);
-    const _rt=d.relationType||'neutral';
-    fill.setAttribute('fill', heartColor(d.score, d.maxScore, _rt));
-    const _base=w.querySelector('rect:first-of-type');
-    if(_base) { _base.setAttribute('fill',(RELATION_TYPES[_rt]||RELATION_TYPES.neutral).color); _base.setAttribute('opacity','0.13'); }
-    main.textContent = String(d.score); main.setAttribute('font-size', Math.abs(d.score)>=100?'13':'17');
-    denom.textContent = '/' + d.maxScore;
-    // Пересборка SVG если знак изменился
-    const path = w.querySelector('path');
-    const isRotated = path?.getAttribute('transform')?.includes('rotate') ?? false;
-    if ((isNeg && !isRotated) || (!isNeg && isRotated)) w.innerHTML = buildHeartSVG(d.score, d.maxScore, _rt);
-  } else {
-    w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType||'neutral');
-  }
-  updateWidgetGlow(d.relationType||'neutral', d.score<0);
-  const tip = document.getElementById('ls-status-tip');
-  if (tip) tip.textContent = getActiveInterp()?.description?.trim() || (d.score + ' / ' + d.maxScore);
+  _renderWidgetContent(w);
 }
 
 function pulseWidget() {
@@ -499,14 +571,8 @@ function flipWidget() {
 }
 
 // ─── Персонажи ───────────────────────────────────────────────────────────────
-function getCharacterList() {
-  try { const ctx=SillyTavern?.getContext?.(); if(!ctx||!Array.isArray(ctx.characters)) return []; return ctx.characters.map((ch,i)=>({index:i,name:ch.name||('Персонаж '+i)})); } catch { return []; }
-}
 function getCurrentCharacterCard() {
   try { const ctx=SillyTavern?.getContext?.(); if(!ctx) return null; if(ctx.characterId!==undefined&&Array.isArray(ctx.characters)) return ctx.characters[ctx.characterId]??null; if(Array.isArray(ctx.characters)&&ctx.characters.length>0) return ctx.characters[0]; } catch {} return null;
-}
-function getCharacterByIndex(idx) {
-  try { const ctx=SillyTavern?.getContext?.(); if(!ctx||!Array.isArray(ctx.characters)) return null; return ctx.characters[idx]??null; } catch { return null; }
 }
 function getCharacterAvatarUrl(char) {
   if(!char) return null; const av=char.avatar||(char.data&&char.data.avatar); if(!av||av==='none') return null; return '/characters/'+av;
@@ -535,8 +601,6 @@ function buildCharacterCardText(char) {
   return parts.join('\n\n');
 }
 function getBaseUrl() { return (cfg().genEndpoint||'').trim().replace(/\/+$/,'').replace(/\/chat\/completions$/,'').replace(/\/v1$/,''); }
-
-// ─── Получение скоупа из UI ───────────────────────────────────────────────────
 function getScopeFromUI() {
   const el = id => document.getElementById(id);
   return {
@@ -577,27 +641,19 @@ async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
   const lang=c.genLang||'ru',langLabel=lang==='ru'?'Russian':'English';
   const userNotes=(c.genUserNotes||'').trim();
   const systemMsg='You are configuring a Love Score system for a text-based RPG. Reply with ONLY valid JSON — no explanations, no markdown, no code blocks.';
-
-  // Формируем только нужные секции в ответе
-  const wantChanges  = scope.changes;
-  const wantPosRange = scope.positiveRanges;
-  const wantNegRange = scope.negativeRanges;
-  const wantMs       = scope.milestones;
-  const wantMax      = scope.suggestedMax;
-
-  let schemaLines = ['{'];
-  if(wantMax)                         schemaLines.push('  "suggestedMax": '+maxScore+',');
-  if(wantChanges)                     schemaLines.push('  "changes": [{"delta": 2, "text": "..."},{"delta": -10, "text": "..."}],');
+  const wantChanges=scope.changes, wantPosRange=scope.positiveRanges, wantNegRange=scope.negativeRanges, wantMs=scope.milestones, wantMax=scope.suggestedMax;
+  let schemaLines=['{'];
+  if(wantMax)                        schemaLines.push('  "suggestedMax": '+maxScore+',');
+  if(wantChanges)                    schemaLines.push('  "changes": [{"delta": 2, "text": "..."},{"delta": -10, "text": "..."}],');
   if(wantPosRange||wantNegRange) {
     const ex=[];
     if(wantNegRange) ex.push('{"min": -100, "max": -1, "text": "..."}');
     if(wantPosRange) ex.push('{"min": 0, "max": 20, "text": "..."}');
     schemaLines.push('  "ranges": ['+ex.join(',')+'],');
   }
-  if(wantMs)                          schemaLines.push('  "milestones": [{"threshold": 15, "text": "..."}]');
+  if(wantMs) schemaLines.push('  "milestones": [{"threshold": 15, "text": "..."}]');
   schemaLines.push('}');
-
-  let rulesLines = ['RULES:'];
+  let rulesLines=['RULES:'];
   if(wantChanges)  rulesLines.push('- changes: at least 6 items with varied positive and negative deltas');
   if(wantNegRange) rulesLines.push('- negative ranges (min:'+MIN_SCORE+' to max:-1): describe hostility, hatred, fear — no gaps');
   if(wantPosRange) rulesLines.push('- positive ranges (min:0 to max:'+maxScore+'): describe attraction and love — no gaps');
@@ -605,30 +661,18 @@ async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
   if(wantMax)      rulesLines.push('- suggestedMax: suggest higher max (200-300) for cold/distant characters');
   rulesLines.push('- All text in '+langLabel);
   if(userNotes)    rulesLines.push('','SPECIAL USER INSTRUCTIONS (priority):', userNotes);
-
-  const omitNote = (!wantChanges||!wantPosRange||!wantNegRange||!wantMs)
-    ? 'NOTE: Only generate the fields listed in the schema. Omit everything else.' : '';
-
+  const omitNote = (!wantChanges||!wantPosRange||!wantNegRange||!wantMs) ? 'NOTE: Only generate the fields listed in the schema.' : '';
   const hasHistory=chatHistory.trim().length>0;
   const userMsg=[
-    hasHistory
-      ? 'Analyze the character card AND the real chat history to generate accurate love score rules.'
-      : 'Analyze the character card and generate love score rules.',
+    hasHistory?'Analyze the character card AND the real chat history to generate accurate love score rules.':'Analyze the character card and generate love score rules.',
     'Score range: '+MIN_SCORE+' to '+maxScore+'. Negative = hostility/hatred. Positive = love/affection.',
     '','CHARACTER CARD:',charCard,'',
-    ...(hasHistory?[
-      'RECENT CHAT HISTORY (use this to ground all descriptions in the real dynamic):',
-      chatHistory,''
-    ]:[]),
-    ...(hasHistory?[
-      'IMPORTANT: Base all change descriptions, ranges and milestones on what actually happens in this chat. Use character names and real events from the history.'
-    ]:[]),
+    ...(hasHistory?['RECENT CHAT HISTORY (use this to ground all descriptions in the real dynamic):',chatHistory,'']:[]),
+    ...(hasHistory?['IMPORTANT: Base all change descriptions, ranges and milestones on what actually happens in this chat.']:[]),
     omitNote,
-    'Reply with STRICTLY valid JSON matching this schema exactly:',
-    ...schemaLines,'',
+    'Reply with STRICTLY valid JSON matching this schema exactly:',...schemaLines,'',
     ...rulesLines
   ].filter(Boolean).join('\n');
-
   const resp=await fetch(base+'/v1/chat/completions',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
@@ -643,7 +687,7 @@ async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
 
 function parseAIResponse(raw) {
   try {
-    let cleaned=raw.replace(/^```[\\w]*\\n?/gm,'').replace(/```$/gm,'').trim();
+    let cleaned=raw.replace(/^```[\w]*\n?/gm,'').replace(/```$/gm,'').trim();
     const _js=cleaned.indexOf('{'),_je=cleaned.lastIndexOf('}');
     if(_js!==-1&&_je>_js) cleaned=cleaned.slice(_js,_je+1);
     const p=JSON.parse(cleaned);
@@ -654,21 +698,17 @@ function parseAIResponse(raw) {
   } catch { return {changes:[],ranges:[],milestones:[],suggestedMax:null,ok:false}; }
 }
 
-// ─── Чат-история ─────────────────────────────────────────────────────────────
 function getChatHistory(n) {
   try {
     const ctx=SillyTavern?.getContext?.();
     if(!ctx?.chat?.length) return '';
     const msgs=n>0?ctx.chat.slice(-n):ctx.chat;
     const charName=getCurrentCharacterCard()?.name||'Персонаж';
-    return msgs.map(m=>{
-      const who=m.is_user?'Игрок':charName;
-      return who+': '+(m.mes||'').trim().slice(0,500);
-    }).join('\n\n');
+    return msgs.map(m=>{ const who=m.is_user?'Игрок':charName; return who+': '+(m.mes||'').trim().slice(0,500); }).join('\n\n');
   } catch{return '';}
 }
 
-// ─── AI-анализ отношений по чату ─────────────────────────────────────────────
+// ─── AI-анализ отношений ──────────────────────────────────────────────────────
 async function analyzeWithAI(charCard,chatHistory) {
   const c=cfg(),base=getBaseUrl(),apiKey=(c.genApiKey||'').trim(),model=(c.genModel||'').trim()||'gpt-4o';
   if(!base) throw new Error('Не указан Endpoint');
@@ -678,11 +718,10 @@ async function analyzeWithAI(charCard,chatHistory) {
   const userMsg=[
     'Analyze the relationship between the player and the character based on the chat history.',
     'Current love score: '+d.score+' (range: '+MIN_SCORE+' to '+d.maxScore+'). Negative=hostility, positive=affection.',
-    '','CHARACTER CARD:',charCard,
-    '','RECENT CHAT HISTORY:',chatHistory,'',
+    '','CHARACTER CARD:',charCard,'','RECENT CHAT HISTORY:',chatHistory,'',
     'Reply in '+(lang?'Russian':'English')+' with STRICTLY valid JSON:',
     '{"suggestedScore":<integer>,"relationType":"<one of: romance|friendship|family|obsession|rival|platonic>","analysis":"<2-3 sentences>","reasoning":"<why this score>"}',
-    'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'. relationType MUST be one of the listed values. Be accurate.',
+    'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'.',
   ].join('\n');
   const resp=await fetch(base+'/v1/chat/completions',{
     method:'POST',
@@ -701,70 +740,97 @@ function parseAnalyzeResponse(raw) {
     const cleaned=raw.replace(/```json\n?/gm,'').replace(/```\n?/gm,'').trim();
     const p=JSON.parse(cleaned);
     const validRT=Object.keys(RELATION_TYPES);
-    const detectedRT=validRT.includes(p.relationType)?p.relationType:null;
-    return {suggestedScore:typeof p.suggestedScore==='number'?Math.round(p.suggestedScore):null,relationType:detectedRT,analysis:String(p.analysis||''),reasoning:String(p.reasoning||''),ok:true};
+    return {suggestedScore:typeof p.suggestedScore==='number'?Math.round(p.suggestedScore):null,relationType:validRT.includes(p.relationType)?p.relationType:null,analysis:String(p.analysis||''),reasoning:String(p.reasoning||''),ok:true};
   } catch{return {suggestedScore:null,analysis:'',reasoning:'',ok:false};}
 }
 
+// ─── Авто-регенерация правил ──────────────────────────────────────────────────
+async function autoRegenAll() {
+  const c=cfg();
+  const base=getBaseUrl(),apiKey=(c.genApiKey||'').trim();
+  if(!base||!apiKey) return; // нет API — тихо пропускаем
+  const char=getCurrentCharacterCard(); if(!char) return;
+  const cardText=buildCharacterCardText(char); if(!cardText.trim()) return;
+
+  const allScope={changes:true,positiveRanges:true,negativeRanges:true,milestones:true,suggestedMax:true};
+  const msgN=Math.max(0,parseInt(c.chatAnalysisMsgCount??20));
+  const history=msgN>0?getChatHistory(msgN):'';
+
+  // Показываем что идёт авто-реген
+  showAutoRegenStatus('⏳ Авто-обновление правил...');
+
+  try {
+    autoSnapshot('Авто-реген');
+    const raw=await generateLoveScoreWithAI(cardText,allScope,history);
+    const parsed=parseAIResponse(raw);
+    if(!parsed.ok) { showAutoRegenStatus('⚠️ Не удалось обновить правила'); return; }
+    const d=loveData();
+    if(parsed.changes.length)     d.scoreChanges=parsed.changes;
+    if(parsed.ranges.length)      d.scaleInterpretations=parsed.ranges;
+    if(parsed.milestones.length)  d.milestones=parsed.milestones;
+    if(parsed.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; c.maxScore=parsed.suggestedMax; }
+    saveSettingsDebounced(); updatePromptInjection(); syncUI();
+    showAutoRegenStatus('✅ Правила обновлены для: '+escHtml(char.name||'персонаж'));
+    toast('info','💫 Авто-реген: правила обновлены для '+( char.name||'персонаж'));
+  } catch(e) {
+    showAutoRegenStatus('⚠️ Ошибка авто-регена: '+e.message);
+  }
+}
+
+function showAutoRegenStatus(text) {
+  const box=document.getElementById('ls-autosuggest-result'); if(!box) return;
+  box.style.display='block';
+  box.innerHTML='<div class="ls-as-title"><i class="fa-solid fa-rotate"></i>&nbsp;Авто-регенерация <button id="ls-as-close" class="menu_button ls-del-btn" style="float:right">✕</button></div>'
+    +'<div style="font-size:12px;line-height:1.6;">'+text+'</div>';
+  document.getElementById('ls-as-close')?.addEventListener('click',()=>{ box.style.display='none'; });
+}
+
 async function onAnalyzeClick() {
-  const btn=document.getElementById('ls-analyze-btn');
-  const status=document.getElementById('ls-analyze-status');
-  const result=document.getElementById('ls-analyze-result');
+  const btn=document.getElementById('ls-analyze-btn'),status=document.getElementById('ls-analyze-status'),result=document.getElementById('ls-analyze-result');
   if(!btn||!status) return;
   btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Анализирую...';
-  status.textContent='Запрос к API...';
-  if(result) result.style.display='none';
+  status.textContent='Запрос к API...'; if(result) result.style.display='none';
   try {
-    const char=getCurrentCharacterCard();
-    if(!char){status.textContent='Нет персонажа.';return;}
-    const cardText=buildCharacterCardText(char);
-    if(!cardText.trim()){status.textContent='Пустая карта персонажа.';return;}
+    const char=getCurrentCharacterCard(); if(!char){status.textContent='Нет персонажа.';return;}
+    const cardText=buildCharacterCardText(char); if(!cardText.trim()){status.textContent='Пустая карта.';return;}
     const n=parseInt(cfg().chatAnalysisMsgCount??20);
-    const history=getChatHistory(n);
-    if(!history.trim()){status.textContent='Нет сообщений в чате.';return;}
+    const history=getChatHistory(n); if(!history.trim()){status.textContent='Нет сообщений в чате.';return;}
     status.textContent='Анализирую '+n+' сообщений...';
     const raw=await analyzeWithAI(cardText,history);
     const parsed=parseAnalyzeResponse(raw);
     if(!parsed.ok||parsed.suggestedScore===null){status.textContent=raw.slice(0,150);return;}
     status.textContent='';
     if(result){
-      const d=loveData();
-      const diff=parsed.suggestedScore-d.score;
-      const diffStr=diff>0?'+'+diff:String(diff);
+      const d=loveData(),diff=parsed.suggestedScore-d.score,diffStr=diff>0?'+'+diff:String(diff);
+      const _rtInfo=parsed.relationType?RELATION_TYPES[parsed.relationType]:null;
       result.style.display='block';
-      const _detRT=parsed.relationType,_rtInfo=_detRT?RELATION_TYPES[_detRT]:null;
       result.innerHTML=
         '<div class="ls-analyze-score">Рекомендуемый счёт: <strong>'+parsed.suggestedScore+'</strong>'
         +'<span style="opacity:.5;font-size:11px;margin-left:6px">(сейчас '+d.score+', '+(diff!==0?diffStr:'без изменений')+')</span></div>'
         +(_rtInfo?'<div class="ls-analyze-reltype">'
-          +'<span style="color:'+_rtInfo.color+';font-size:20px;vertical-align:middle;'+ (_detRT==='hostile'?'display:inline-block;transform:rotate(180deg) scaleX(1.15) scaleY(0.88);':'')+'">&#10084;</span>'
+          +'<span style="color:'+_rtInfo.color+';font-size:18px;">&#10084;</span>'
           +'<span style="font-size:12px;margin-left:6px;opacity:.8;">'+escHtml(_rtInfo.label)+'</span>'
-          +'<button class="menu_button ls-rt-confirm-btn" data-rt="'+_detRT+'" style="margin-left:8px;padding:2px 8px;font-size:11px;">Применить тип</button>'
+          +'<button class="menu_button" data-rt="'+parsed.relationType+'" id="ls-rt-confirm-btn" style="margin-left:8px;padding:2px 8px;font-size:11px;">Применить тип</button>'
           +'</div>':'')
         +(parsed.analysis?'<div class="ls-analyze-text">'+escHtml(parsed.analysis)+'</div>':'')
         +(parsed.reasoning?'<div class="ls-analyze-reason">'+escHtml(parsed.reasoning)+'</div>':'')
         +'<button id="ls-analyze-apply" class="menu_button" style="margin-top:8px;width:100%"><i class="fa-solid fa-check"></i> Применить счёт '+parsed.suggestedScore+'</button>';
-      document.querySelectorAll('.ls-rt-confirm-btn').forEach(b=>b.addEventListener('click',function(){
+      document.getElementById('ls-rt-confirm-btn')?.addEventListener('click',function(){
         loveData().relationType=this.dataset.rt||'neutral';
         saveSettingsDebounced();syncUI();pulseWidget();
         toast('success','Тип: '+(RELATION_TYPES[this.dataset.rt]?.label||''));
-      }));
+      });
       document.getElementById('ls-analyze-apply')?.addEventListener('click',()=>{
         const d=loveData(),prev=d.score;
         d.score=Math.max(MIN_SCORE,Math.min(parsed.suggestedScore,d.maxScore));
-        const delta=d.score-prev;
-        if(delta!==0) addToLog(d,delta,'AI анализ чата');
+        const delta=d.score-prev; if(delta!==0) addToLog(d,delta,'AI анализ чата');
         saveSettingsDebounced();updatePromptInjection();syncUI();pulseWidget();renderScoreLog();
         toast('success','Счёт установлен: '+d.score);
       });
     }
     toast('success','Анализ готов → '+parsed.suggestedScore);
-  } catch(e){
-    status.textContent=e.message;
-    toast('error',e.message);
-  } finally {
-    btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-chart-line"></i> Анализировать чат';
-  }
+  } catch(e){ status.textContent=e.message; toast('error',e.message); }
+  finally { btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-chart-line"></i> Анализировать чат'; }
 }
 
 async function onGenerateClick() {
@@ -773,38 +839,24 @@ async function onGenerateClick() {
   btn.disabled=true; btn.textContent='Генерирую...'; status.textContent='Обращаюсь к API...';
   try {
     const scope=getScopeFromUI();
-    if(!scope.changes&&!scope.positiveRanges&&!scope.negativeRanges&&!scope.milestones){
-      status.textContent='Выбери хотя бы одну секцию для генерации.'; return;
-    }
-    // Авто-снапшот
+    if(!scope.changes&&!scope.positiveRanges&&!scope.negativeRanges&&!scope.milestones){ status.textContent='Выбери хотя бы одну секцию.'; return; }
     autoSnapshot('До генерации');
-    const char=getCurrentCharacterCard();
-    if(!char){status.textContent='Персонаж не найден. Открой чат с персонажем.';return;}
-    const cardText=buildCharacterCardText(char);
-    if(!cardText.trim()){status.textContent='Карточка персонажа пустая.';return;}
-    status.textContent='Генерирую для: '+(char.name||'персонаж')+'...';
+    const char=getCurrentCharacterCard(); if(!char){status.textContent='Персонаж не найден.';return;}
+    const cardText=buildCharacterCardText(char); if(!cardText.trim()){status.textContent='Карточка пустая.';return;}
     const _genMsgN=parseInt(cfg().chatAnalysisMsgCount??0);
     const _genHistory=_genMsgN>0?getChatHistory(_genMsgN):'';
-    if(_genHistory) status.textContent='Читаю '+_genMsgN+' сообщ. + карту персонажа...';
-    else status.textContent='Читаю карту персонажа (без истории чата)...';
+    status.textContent=_genHistory?'Читаю '+_genMsgN+' сообщ. + карту...':'Читаю карту персонажа...';
     const raw=await generateLoveScoreWithAI(cardText,scope,_genHistory),parsed=parseAIResponse(raw);
     if(!parsed.ok){status.textContent='Ошибка разбора: '+raw.slice(0,120);return;}
     const d=loveData();
-    if(parsed.changes.length>0   &&scope.changes)                     d.scoreChanges=parsed.changes;
-    if(parsed.ranges.length>0    &&(scope.positiveRanges||scope.negativeRanges)) {
-      if(scope.positiveRanges&&scope.negativeRanges) {
-        d.scaleInterpretations=parsed.ranges;
-      } else if(scope.positiveRanges) {
-        d.scaleInterpretations=[...d.scaleInterpretations.filter(x=>x.max<0),...parsed.ranges.filter(x=>x.min>=0)];
-      } else {
-        d.scaleInterpretations=[...parsed.ranges.filter(x=>x.max<0),...d.scaleInterpretations.filter(x=>x.min>=0)];
-      }
+    if(parsed.changes.length>0&&scope.changes)                          d.scoreChanges=parsed.changes;
+    if(parsed.ranges.length>0&&(scope.positiveRanges||scope.negativeRanges)) {
+      if(scope.positiveRanges&&scope.negativeRanges) d.scaleInterpretations=parsed.ranges;
+      else if(scope.positiveRanges) d.scaleInterpretations=[...d.scaleInterpretations.filter(x=>x.max<0),...parsed.ranges.filter(x=>x.min>=0)];
+      else d.scaleInterpretations=[...parsed.ranges.filter(x=>x.max<0),...d.scaleInterpretations.filter(x=>x.min>=0)];
     }
     if(parsed.milestones?.length>0&&scope.milestones) d.milestones=parsed.milestones;
-    if(parsed.suggestedMax&&scope.suggestedMax&&parsed.suggestedMax!==d.maxScore){
-      d.maxScore=parsed.suggestedMax; cfg().maxScore=parsed.suggestedMax;
-      toast('info','Максимум изменён на '+parsed.suggestedMax);
-    }
+    if(parsed.suggestedMax&&scope.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; cfg().maxScore=parsed.suggestedMax; toast('info','Максимум изменён на '+parsed.suggestedMax); }
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
     status.textContent='Готово. Правил: '+parsed.changes.length+', диапазонов: '+parsed.ranges.length+', событий: '+parsed.milestones.length;
     toast('success','Сгенерировано для '+(char.name||'персонаж'));
@@ -817,175 +869,220 @@ function renderScoreLog() {
   const ct=document.getElementById('ls-score-log'); if(!ct) return;
   const log=(loveData().scoreLog||[]);
   if(!log.length){ct.innerHTML='<div style="font-size:11px;opacity:.3;padding:5px 6px;">Пока пусто</div>';return;}
-  let html='';
-  log.forEach(e=>{
+  ct.innerHTML=log.map(e=>{
     const pos=e.delta>0,neg=e.delta<0;
-    const dc=pos?'#6ee86e':neg?'#ff6b6b':'#b0b0b0',bg=pos?'rgba(80,200,80,.07)':neg?'rgba(220,60,60,.07)':'rgba(180,180,180,.04)',bc=pos?'rgba(100,220,100,.4)':neg?'rgba(220,80,80,.4)':'rgba(160,160,160,.2)',arr=pos?'↑':neg?'↓':'→';
-    const sig=e.sign||(e.delta>=0?'+'+e.delta:String(e.delta));
-    html+='<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:3px;border-radius:5px;background:'+bg+';border-left:3px solid '+bc+';">'
-      +'<span style="font-size:13px;font-weight:800;color:'+dc+';min-width:38px;white-space:nowrap;">'+arr+'&thinsp;'+escHtml(sig)+'</span>'
+    const dc=pos?'#6ee86e':neg?'#ff6b6b':'#b0b0b0',bg=pos?'rgba(80,200,80,.06)':neg?'rgba(220,60,60,.06)':'rgba(180,180,180,.03)';
+    const arr=pos?'↑':neg?'↓':'→',sig=e.sign||(e.delta>=0?'+'+e.delta:String(e.delta));
+    return '<div class="ls-log-entry" style="background:'+bg+';">'
+      +'<span class="ls-log-delta" style="color:'+dc+';">'+arr+'&thinsp;'+escHtml(sig)+'</span>'
       +((e.reason||'').trim()
-        ?'<span style="font-size:11px;line-height:1.4;color:var(--SmartThemeBodyColor,#ccc);opacity:.7;">'+escHtml(e.reason)+'</span>'
-        :'<span style="font-size:11px;opacity:.25;font-style:italic;">без описания</span>')
+        ?'<span class="ls-log-reason">'+escHtml(e.reason)+'</span>'
+        :'<span style="font-size:11px;opacity:.25;font-style:italic;">—</span>')
       +'</div>';
-  });
-  ct.innerHTML=html;
+  }).join('');
 }
 
 // ─── Пресеты UI ──────────────────────────────────────────────────────────────
 function renderPresets() {
   const ct=document.getElementById('ls-preset-list'); if(!ct) return;
-  const c=cfg(),presets=c.presets||[];
-  let html='';
-  if(!presets.length) { ct.innerHTML='<div style="font-size:11px;opacity:.3;padding:5px;">Нет сохранённых пресетов</div>'; return; }
-  [...presets].reverse().forEach(p=>{
+  const presets=cfg().presets||[];
+  if(!presets.length){ct.innerHTML='<div style="font-size:11px;opacity:.3;padding:5px;">Нет сохранённых пресетов</div>';return;}
+  ct.innerHTML=[...presets].reverse().map(p=>{
     const isSnap=p.name.startsWith('🔄');
-    html+='<div class="ls-preset-row'+(isSnap?' ls-preset-snap':'')+'">'
+    return '<div class="ls-preset-row'+(isSnap?' ls-preset-snap':'')+'">'
       +'<div class="ls-preset-info"><div class="ls-preset-name">'+escHtml(p.name)+'</div><div class="ls-preset-meta">'+escHtml(p.createdAt||'')+(p.maxScore?' · макс '+p.maxScore:'')+'</div></div>'
       +'<div class="ls-preset-actions">'
       +'<button class="menu_button ls-preset-btn ls-preset-load" data-id="'+p.id+'">Загрузить</button>'
       +'<button class="menu_button ls-preset-btn ls-preset-export" data-id="'+p.id+'">JSON</button>'
       +'<button class="menu_button ls-preset-btn ls-del-btn ls-preset-del" data-id="'+p.id+'">✕</button>'
       +'</div></div>';
-  });
-  ct.innerHTML=html;
-
+  }).join('');
   $(ct).off('click','.ls-preset-load').on('click','.ls-preset-load',function(){
-    const id=$(this).data('id'),p=(cfg().presets||[]).find(x=>x.id===String(id));
-    if(p) loadPresetUI(p);
+    const id=$(this).data('id'),p=(cfg().presets||[]).find(x=>x.id===String(id)); if(p) loadPresetUI(p);
   });
   $(ct).off('click','.ls-preset-export').on('click','.ls-preset-export',function(){
-    const id=$(this).data('id'),p=(cfg().presets||[]).find(x=>x.id===String(id));
-    if(p) exportPresetJSON(p);
+    const id=$(this).data('id'),p=(cfg().presets||[]).find(x=>x.id===String(id)); if(p) exportPresetJSON(p);
   });
-  $(ct).off('click','.ls-preset-del').on('click','.ls-preset-del',function(){
-    deletePreset(String($(this).data('id')));
-  });
+  $(ct).off('click','.ls-preset-del').on('click','.ls-preset-del',function(){ deletePreset(String($(this).data('id'))); });
 }
 
-// ─── HTML панели ──────────────────────────────────────────────────────────────
+// ─── HTML панели (с аккордеонами) ─────────────────────────────────────────────
+function acc(id, title, content, open=false) {
+  return `<div class="inline-drawer" id="${id}">
+    <div class="inline-drawer-toggle inline-drawer-header"><b>${title}</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+    <div class="inline-drawer-content"${open?'':' style="display:none"'}>${content}</div>
+  </div>`;
+}
+
+function heartSvgMini(rt) {
+  const rot = rt==='hostile' ? 'transform:rotate(180deg);' : '';
+  return `<svg viewBox="0 0 20 16" width="20" height="16" style="display:block;fill:currentColor;${rot}"><path d="M10,15.5 C10,15.5 1,9.5 1,4.5 C1,2 3,0.5 5.5,0.5 C7.5,0.5 9.2,2 10,3.5 C10.8,2 12.5,0.5 14.5,0.5 C17,0.5 19,2 19,4.5 C19,9.5 10,15.5 10,15.5Z"/></svg>`;
+}
+
 function settingsPanelHTML() {
-  const c=cfg(),curModel=escHtml(c.genModel||''),curEndpoint=escHtml(c.genEndpoint||'');
-  const curKey=escHtml(c.genApiKey||''),lang=c.genLang||'ru',curNotes=escHtml(c.genUserNotes||'');
+  const c=cfg(), curModel=escHtml(c.genModel||''), curEndpoint=escHtml(c.genEndpoint||'');
+  const curKey=escHtml(c.genApiKey||''), lang=c.genLang||'ru', curNotes=escHtml(c.genUserNotes||'');
   const sc=c.genScope||defaultSettings.genScope;
-  function chk(id,val,label){ return '<label class="ls-scope-item"><input type="checkbox" id="'+id+'"'+(val?' checked':'')+'> '+label+'</label>'; }
-  return '<div id="ls-settings-panel" class="extension-settings">'
-    +'<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>&#10084;&#65039; Love Score</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>'
-    +'<div class="inline-drawer-content">'
+  const chk=(id,val,label)=>`<label class="ls-scope-item"><input type="checkbox" id="${id}"${val?' checked':''}> ${label}</label>`;
 
-    // Основные
-    +'<div class="ls-row"><label class="checkbox_label" for="ls-enabled"><input type="checkbox" id="ls-enabled"><span>Включено</span></label></div>'
-    +'<div class="ls-row"><span style="font-size:12px;opacity:.6;">Очки:</span><input id="ls-val" type="number" class="ls-num-input" style="width:72px;"><span style="opacity:.3;">/</span><input id="ls-max" type="number" min="1" class="ls-num-input" style="width:72px;"><button id="ls-reset-btn" class="menu_button">Сбросить</button></div>'
-    +'<div class="ls-rel-type-row">'
-    +Object.entries(RELATION_TYPES).map(([k,v])=>{const svg=k==='hostile'?'<svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" style=\"display:block;fill:currentColor;transform:rotate(180deg);\"><path d=\"M10,15.5 C10,15.5 1,9.5 1,4.5 C1,2 3,0.5 5.5,0.5 C7.5,0.5 9.2,2 10,3.5 C10.8,2 12.5,0.5 14.5,0.5 C17,0.5 19,2 19,4.5 C19,9.5 10,15.5 10,15.5Z\"/></svg>':'<svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" style=\"display:block;fill:currentColor;\"><path d=\"M10,15.5 C10,15.5 1,9.5 1,4.5 C1,2 3,0.5 5.5,0.5 C7.5,0.5 9.2,2 10,3.5 C10.8,2 12.5,0.5 14.5,0.5 C17,0.5 19,2 19,4.5 C19,9.5 10,15.5 10,15.5Z\"/></svg>';return '<span class="ls-rel-type-btn ls-rt-'+k+(loveData().relationType===k?' ls-rt-active':'')+'" data-rt="'+k+'" title="'+v.label+'">'+svg+'</span>';}).join('')
-    +'<span class="ls-rel-type-label" id="ls-rt-label">'+(RELATION_TYPES[loveData().relationType||'neutral']?.label||'')+'</span>'
-    +'</div>'
-    +'<div id="ls-type-info"></div>'
-    +'<div class="ls-row"><span style="font-size:12px;opacity:.6;white-space:nowrap;">Размер:</span><input type="range" id="ls-size" min="36" max="128" step="4" class="ls-size-slider" style="flex:1;"><span id="ls-size-label" style="font-size:12px;min-width:36px;text-align:right;opacity:.5;">64px</span><button id="ls-reset-pos" class="menu_button" title="Вернуть в угол">Позиция</button></div>'
-    +'<div id="ls-active-state" style="display:none;"><strong>Сейчас:</strong> <span id="ls-active-text"></span></div>'
+  const heartStyleSvgChecked = (c.heartStyle||'svg')==='svg' ? ' checked' : '';
+  const heartStyleBlurChecked = (c.heartStyle||'svg')==='blur' ? ' checked' : '';
 
-    // История
-    +'<div class="ls-section-title" style="display:flex;align-items:center;justify-content:space-between;">История <button id="ls-log-clear" class="menu_button ls-log-clear">очистить</button></div>'
-    +'<div id="ls-score-log"></div>'
+  // ── Основное ──
+  const mainContent = `
+    <div class="ls-row"><label class="checkbox_label" for="ls-enabled"><input type="checkbox" id="ls-enabled"><span>Включено</span></label></div>
+    <div class="ls-row">
+      <span style="font-size:12px;opacity:.6;">Очки:</span>
+      <input id="ls-val" type="number" class="ls-num-input" style="width:72px;">
+      <span style="opacity:.3;">/</span>
+      <input id="ls-max" type="number" min="1" class="ls-num-input" style="width:72px;">
+      <button id="ls-reset-btn" class="menu_button">Сбросить</button>
+    </div>
+    <div class="ls-rel-type-row">
+      ${Object.entries(RELATION_TYPES).map(([k,v])=>`<span class="ls-rel-type-btn ls-rt-${k}" data-rt="${k}" title="${v.label}">${heartSvgMini(k)}</span>`).join('')}
+      <span class="ls-rel-type-label" id="ls-rt-label"></span>
+    </div>
+    <div id="ls-type-info"></div>
+    <div class="ls-row">
+      <span style="font-size:12px;opacity:.6;white-space:nowrap;">Размер:</span>
+      <input type="range" id="ls-size" min="36" max="128" step="4" class="ls-size-slider" style="flex:1;">
+      <span id="ls-size-label" style="font-size:12px;min-width:36px;text-align:right;opacity:.5;">64px</span>
+      <button id="ls-reset-pos" class="menu_button" title="Вернуть в угол">Позиция</button>
+    </div>
+    <div class="ls-row">
+      <span style="font-size:12px;opacity:.6;white-space:nowrap;">Сердечко:</span>
+      <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-heart-style" value="svg"${heartStyleSvgChecked}> <span>Заливка</span></label>
+      <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-heart-style" value="blur"${heartStyleBlurChecked}> <span>Размытое</span></label>
+    </div>
+    <div class="ls-row"><label class="checkbox_label" for="ls-gradual"><input type="checkbox" id="ls-gradual"><span>SlowBurn (±2 макс за ответ)</span></label></div>
+    <div id="ls-active-state" style="display:none;"><strong>Сейчас:</strong> <span id="ls-active-text"></span></div>
+    <div class="ls-section-title" style="display:flex;align-items:center;justify-content:space-between;">История <button id="ls-log-clear" class="menu_button ls-log-clear">очистить</button></div>
+    <div id="ls-score-log"></div>`;
 
-    // Пресеты
-    +'<div id="ls-preset-box">'
-    +'<div class="ls-section-title">Пресеты и шаблоны</div>'
-    +'<div class="ls-hint">Сохраняй и загружай наборы правил. Авто-снапшот делается перед каждой генерацией.</div>'
-    // Режим загрузки
-    +'<div id="ls-load-mode-box">'
-    +'<div style="font-size:11px;opacity:.5;margin-bottom:5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Режим применения</div>'
-    +'<div class="ls-load-mode-row">'
-    +'<label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-load-mode" value="replace" checked> <span>Заменить</span></label>'
-    +'<label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-load-mode" value="merge"> <span>Дополнить</span></label>'
-    +'</div>'
-    +'<div class="ls-load-checks">'
-    +'<label class="ls-scope-item"><input type="checkbox" id="ls-load-changes" checked> Правила</label>'
-    +'<label class="ls-scope-item"><input type="checkbox" id="ls-load-ranges" checked> Диапазоны</label>'
-    +'<label class="ls-scope-item"><input type="checkbox" id="ls-load-milestones" checked> События</label>'
-    +'<label class="ls-scope-item"><input type="checkbox" id="ls-load-maxscore" checked> Макс. очки</label>'
-    +'</div>'
-    +'</div>'
-    // Сохранить пресет
-    +'<div class="ls-row" style="margin-top:8px;">'
-    +'<input type="text" id="ls-preset-name-input" class="ls-api-field" style="flex:1;" placeholder="Название пресета...">'
-    +'<button id="ls-preset-save" class="menu_button" style="white-space:nowrap;">Сохранить</button>'
-    +'</div>'
-    // Импорт
-    +'<div class="ls-row">'
-    +'<button id="ls-preset-import-file-btn" class="menu_button"><i class="fa-solid fa-folder-open"></i> Импорт из файла</button>'
-    +'<input type="file" id="ls-preset-file-input" accept=".json,application/json" style="display:none;">'
-    +'</div>'
-    +'<div id="ls-preset-list"></div>'
-    +'</div>'
+  // ── Правила ──
+  const rulesContent = `
+    <div class="ls-section-title" style="margin-top:0;">Правила изменения</div>
+    <div class="ls-hint">За что растут и падают очки.</div>
+    <div id="ls-changes-container"></div>
+    <div class="ls-section-title">Поведение по диапазонам</div>
+    <div class="ls-hint">Описывай поведение для позитивных и негативных значений.</div>
+    <div id="ls-interp-container"></div>
+    <div class="ls-section-title">Романтические события</div>
+    <div class="ls-hint">При достижении порога персонаж инициирует событие.</div>
+    <div class="ls-milestone-reset-row"><button id="ls-milestone-reset-all" class="menu_button">Сбросить все</button></div>
+    <div id="ls-milestones-container"></div>`;
 
-    // AI генерация
-    +'<div id="ls-ai-box">'
-    +'<div class="ls-section-title">Авто-генерация через ИИ</div>'
-    +'<div class="ls-hint">Выбери что генерировать, подключи API и нажми кнопку.</div>'
-    // Скоуп
-    +'<div style="font-size:11px;opacity:.5;font-weight:600;letter-spacing:.4px;text-transform:uppercase;margin-bottom:5px;">Что генерировать</div>'
-    +'<div class="ls-scope-grid">'
-    +chk('ls-scope-changes',       sc.changes,        'Правила изменений')
-    +chk('ls-scope-pos-ranges',    sc.positiveRanges,  'Диапазоны позитив')
-    +chk('ls-scope-neg-ranges',    sc.negativeRanges,  'Диапазоны негатив (-100…-1)')
-    +chk('ls-scope-milestones',    sc.milestones,     'Романтические события')
-    +chk('ls-scope-max',           sc.suggestedMax,   'Предложить макс. очки')
-    +'</div>'
-    +'<div class="ls-row" style="margin-bottom:6px;gap:12px;"><span style="font-size:12px;opacity:.6;white-space:nowrap;">Язык:</span>'
-    +'<label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-lang" id="ls-lang-ru" value="ru"'+(lang==='ru'?' checked':'')+'>  <span>Русский</span></label>'
-    +'<label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-lang" id="ls-lang-en" value="en"'+(lang==='en'?' checked':'')+'>  <span>English</span></label>'
-    +'</div>'
-    +'<label class="ls-api-label">Особые пожелания</label>'
-    +'<textarea id="ls-gen-notes" class="ls-api-field" rows="2" placeholder="Например: не добавляй события про брак..." style="resize:vertical;font-family:inherit;font-size:12px;line-height:1.5;">'+curNotes+'</textarea>'
-    +'<label class="ls-api-label">Endpoint</label>'
-    +'<input id="ls-gen-endpoint" class="ls-api-field" type="text" placeholder="https://api.example.com/v1" value="'+curEndpoint+'">'
-    +'<label class="ls-api-label">API Key</label>'
-    +'<input id="ls-gen-apikey" class="ls-api-field" type="password" placeholder="sk-..." value="'+curKey+'">'
-    +'<label class="ls-api-label">Модель</label>'
-    +'<div class="ls-model-row"><select id="ls-gen-model-select">'+(curModel?'<option value="'+curModel+'" selected>'+curModel+'</option>':'<option value="">-- нажми обновить --</option>')+'</select><button id="ls-refresh-models" class="menu_button ls-refresh-btn" title="Загрузить модели"><i class="fa-solid fa-sync"></i></button></div>'
-    +'<div style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;margin:8px 0 0;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Персонаж</div>'
-    +'<div id="ls-char-preview"><img id="ls-char-avatar" class="ls-avatar-hidden" src="" alt=""><span id="ls-char-avatar-name" style="font-size:12px;opacity:.6;"></span></div>'
+  // ── AI ──
+  const aiContent = `
+    <div class="ls-hint">Выбери что генерировать, подключи API и нажми кнопку.</div>
+    <div style="font-size:11px;opacity:.5;font-weight:600;letter-spacing:.4px;text-transform:uppercase;margin-bottom:5px;">Что генерировать</div>
+    <div class="ls-scope-grid">
+      ${chk('ls-scope-changes',sc.changes,'Правила изменений')}
+      ${chk('ls-scope-pos-ranges',sc.positiveRanges,'Диапазоны позитив')}
+      ${chk('ls-scope-neg-ranges',sc.negativeRanges,'Диапазоны негатив (-100…-1)')}
+      ${chk('ls-scope-milestones',sc.milestones,'Романтические события')}
+      ${chk('ls-scope-max',sc.suggestedMax,'Предложить макс. очки')}
+    </div>
+    <div class="ls-row" style="margin-bottom:6px;gap:12px;"><span style="font-size:12px;opacity:.6;white-space:nowrap;">Язык:</span>
+      <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-lang" id="ls-lang-ru" value="ru"${lang==='ru'?' checked':''}> <span>Русский</span></label>
+      <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-lang" id="ls-lang-en" value="en"${lang==='en'?' checked':''}> <span>English</span></label>
+    </div>
+    <label class="ls-api-label">Особые пожелания</label>
+    <textarea id="ls-gen-notes" class="ls-api-field" rows="2" placeholder="Например: не добавляй события про брак..." style="resize:vertical;font-family:inherit;font-size:12px;line-height:1.5;">${curNotes}</textarea>
+    <label class="ls-api-label">Endpoint</label>
+    <input id="ls-gen-endpoint" class="ls-api-field" type="text" placeholder="https://api.example.com/v1" value="${curEndpoint}">
+    <label class="ls-api-label">API Key</label>
+    <input id="ls-gen-apikey" class="ls-api-field" type="password" placeholder="sk-..." value="${curKey}">
+    <label class="ls-api-label">Модель</label>
+    <div class="ls-model-row">
+      <select id="ls-gen-model-select">${curModel?`<option value="${curModel}" selected>${curModel}</option>`:'<option value="">-- нажми обновить --</option>'}</select>
+      <button id="ls-refresh-models" class="menu_button ls-refresh-btn" title="Загрузить модели"><i class="fa-solid fa-sync"></i></button>
+    </div>
+    <div style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;margin:8px 0 0;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Персонаж</div>
+    <div id="ls-char-preview"><img id="ls-char-avatar" class="ls-avatar-hidden" src="" alt=""><span id="ls-char-avatar-name" style="font-size:12px;opacity:.6;"></span></div>
+    <div class="ls-row" style="margin-bottom:6px;gap:6px;">
+      <span style="font-size:12px;opacity:.6;white-space:nowrap">Сообщений из чата:&nbsp;</span>
+      <input type="number" id="ls-gen-msg-count" class="ls-num-input" min="0" max="200" style="width:60px" value="${c.chatAnalysisMsgCount||20}">
+      <span style="font-size:10px;opacity:.35;margin-left:2px">0 = без истории</span>
+    </div>
+    <button id="ls-gen-btn" class="menu_button" style="width:100%">Сгенерировать</button>
+    <div id="ls-gen-status"></div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.08));">
+      <div class="ls-section-title" style="margin-top:0;">Анализ чата</div>
+      <div class="ls-hint">ИИ читает историю чата + карту персонажа и предлагает счёт отношений</div>
+      <button id="ls-analyze-btn" class="menu_button" style="width:100%"><i class="fa-solid fa-chart-line"></i> Анализировать чат</button>
+      <div id="ls-analyze-status" style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:14px;"></div>
+      <div id="ls-analyze-result"></div>
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.08));">
+      <div class="ls-section-title" style="margin-top:0;"><i class="fa-solid fa-rotate" style="margin-right:5px;"></i>Авто-регенерация</div>
+      <div class="ls-hint">Каждые N сообщений ИИ полностью пересоздаёт правила изменений, диапазоны и события — чтобы они оставались актуальными по ходу чата.</div>
+      <div class="ls-row">
+        <label class="checkbox_label" for="ls-autosuggest-enabled"><input type="checkbox" id="ls-autosuggest-enabled"${c.autoSuggestEnabled?' checked':''}><span>Включить авто-регенерацию</span></label>
+      </div>
+      <div class="ls-row" style="gap:8px;">
+        <span style="font-size:12px;opacity:.6;white-space:nowrap;">Каждые</span>
+        <input type="number" id="ls-autosuggest-interval" class="ls-num-input" min="5" max="100" style="width:60px;" value="${c.autoSuggestInterval||20}">
+        <span style="font-size:12px;opacity:.6;">сообщений</span>
+        <button id="ls-autosuggest-now" class="menu_button" title="Регенерировать прямо сейчас"><i class="fa-solid fa-rotate"></i></button>
+      </div>
+      <div id="ls-autosuggest-result"></div>
+    </div>`;
 
-    +'<div class="ls-row" style="margin-bottom:6px;gap:6px;">'
-    +'<span style="font-size:12px;opacity:.6;white-space:nowrap">Сообщений из чата:&nbsp;</span>'
-    +'<input type="number" id="ls-gen-msg-count" class="ls-num-input" min="0" max="200" style="width:60px" title="0 = не читать" value="'+(c.chatAnalysisMsgCount||20)+'">'
-    +'<span style="font-size:10px;opacity:.35;margin-left:2px">0 = без истории</span>'
-    +'</div>'
-    +'<button id="ls-gen-btn" class="menu_button">Сгенерировать</button>'
-    +'<div id="ls-gen-status"></div>'
-    +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.08));">'
-    +'<div class="ls-section-title">Анализ чата</div>'
-    +'<div class="ls-hint">ИИ читает историю чата + карту персонажа и предлагает счёт отношений</div>'
-    +'<button id="ls-analyze-btn" class="menu_button" style="width:100%"><i class="fa-solid fa-chart-line"></i> Анализировать чат</button>'
-    +'<div id="ls-analyze-status" style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.6;margin-top:5px;min-height:14px;"></div>'
-    +'<div id="ls-analyze-result"></div>'
-    +'</div>'
-    +'</div>'
+  // ── Пресеты ──
+  const presetsContent = `
+    <div class="ls-hint">Сохраняй и загружай наборы правил. Авто-снапшот делается перед каждой генерацией.</div>
+    <div id="ls-load-mode-box">
+      <div style="font-size:11px;opacity:.5;margin-bottom:5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Режим применения</div>
+      <div class="ls-load-mode-row">
+        <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-load-mode" value="replace" checked> <span>Заменить</span></label>
+        <label class="checkbox_label" style="margin:0;gap:5px;"><input type="radio" name="ls-load-mode" value="merge"> <span>Дополнить</span></label>
+      </div>
+      <div class="ls-load-checks">
+        <label class="ls-scope-item"><input type="checkbox" id="ls-load-changes" checked> Правила</label>
+        <label class="ls-scope-item"><input type="checkbox" id="ls-load-ranges" checked> Диапазоны</label>
+        <label class="ls-scope-item"><input type="checkbox" id="ls-load-milestones" checked> События</label>
+        <label class="ls-scope-item"><input type="checkbox" id="ls-load-maxscore" checked> Макс. очки</label>
+      </div>
+    </div>
+    <div class="ls-row" style="margin-top:8px;">
+      <input type="text" id="ls-preset-name-input" class="ls-api-field" style="flex:1;" placeholder="Название пресета...">
+      <button id="ls-preset-save" class="menu_button" style="white-space:nowrap;">Сохранить</button>
+    </div>
+    <div class="ls-row">
+      <button id="ls-preset-import-file-btn" class="menu_button"><i class="fa-solid fa-folder-open"></i> Импорт из файла</button>
+      <input type="file" id="ls-preset-file-input" accept=".json,application/json" style="display:none;">
+    </div>
+    <div id="ls-preset-list"></div>`;
 
-    // Правила
-    +'<div class="ls-section-title">Правила изменения</div>'
-    +'<div class="ls-hint">За что растут и падают очки.</div>'
-    +'<div id="ls-changes-container"></div>'
-    +'<div class="ls-section-title">Поведение по диапазонам</div>'
-    +'<div class="ls-hint">Описывай поведение для позитивных и негативных значений.</div>'
-    +'<div id="ls-interp-container"></div>'
-    +'<div class="ls-section-title">Романтические события</div>'
-    +'<div class="ls-hint">При достижении порога персонаж инициирует событие.</div>'
-    +'<div class="ls-milestone-reset-row"><button id="ls-milestone-reset-all" class="menu_button">Сбросить все</button></div>'
-    +'<div id="ls-milestones-container"></div>'
-    +'<div class="ls-row" style="margin-top:10px;"><label class="checkbox_label" for="ls-gradual"><input type="checkbox" id="ls-gradual"><span>SlowBurn (не более ±2 за ответ; правила применяются полностью)</span></label></div>'
-    +'</div></div></div>';
+  return `<div id="ls-settings-panel" class="extension-settings">
+    <div class="inline-drawer">
+      <div class="inline-drawer-toggle inline-drawer-header"><b><i class="fa-solid fa-heart" style="color:#ff4466;margin-right:6px;"></i>Love Score</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+      <div class="inline-drawer-content">
+        ${acc('ls-acc-main',   'Основное',       mainContent,    true)}
+        ${acc('ls-acc-rules',  'Правила',        rulesContent,   false)}
+        ${acc('ls-acc-ai',     'AI генерация',   aiContent,      false)}
+        ${acc('ls-acc-presets','Пресеты',        presetsContent, false)}
+      </div>
+    </div>
+  </div>`;
 }
 
+// ─── Рендер секций ────────────────────────────────────────────────────────────
 function renderChanges() {
   const ct=document.getElementById('ls-changes-container'); if(!ct) return;
   const arr=loveData().scoreChanges||[]; let html='';
   arr.forEach((c,i)=>{
-    const pos=c.delta>=0,cls=pos?'ls-card-pos':'ls-card-neg',icon=pos?'&#10084;&#65039;':'&#128148;',ph=pos?'При каких условиях растёт...':'При каких условиях падает...';
-    html+='<div class="ls-card '+cls+'" data-idx="'+i+'"><div class="ls-heart-box"><span class="ls-heart-icon">'+icon+'</span><input type="number" class="ls-delta-input ls-num-input" value="'+c.delta+'" data-idx="'+i+'" style="width:56px;font-weight:600;"></div><textarea class="ls-change-desc ls-textarea-field" data-idx="'+i+'" rows="3" placeholder="'+ph+'">'+escHtml(c.description)+'</textarea><button class="ls-del-change menu_button ls-del-btn" data-idx="'+i+'"><i class="fa-solid fa-times"></i></button></div>';
+    const pos=c.delta>=0,cls=pos?'ls-card-pos':'ls-card-neg';
+    const icon=pos?'<i class="fa-solid fa-heart ls-heart-icon ls-icon-pos"></i>':'<i class="fa-solid fa-heart-crack ls-heart-icon ls-icon-neg"></i>';
+    const ph=pos?'При каких условиях растёт...':'При каких условиях падает...';
+    html+=`<div class="ls-card ${cls}" data-idx="${i}">
+      <div class="ls-heart-box">${icon}<input type="number" class="ls-delta-input ls-num-input" value="${c.delta}" data-idx="${i}" style="width:56px;font-weight:600;"></div>
+      <textarea class="ls-change-desc ls-textarea-field" data-idx="${i}" rows="3" placeholder="${ph}">${escHtml(c.description)}</textarea>
+      <button class="ls-del-change menu_button ls-del-btn" data-idx="${i}"><i class="fa-solid fa-times"></i></button>
+    </div>`;
   });
-  html+='<button id="ls-add-change" class="menu_button ls-add-btn">+ Добавить правило</button>';
+  html+='<button id="ls-add-change" class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить правило</button>';
   ct.innerHTML=html; bindChangesEv();
 }
 
@@ -996,10 +1093,20 @@ function renderInterps() {
     const act=d.score>=ip.min&&d.score<=ip.max,isNeg=ip.max<0;
     const bst=act?(isNeg?'border-color:rgba(80,200,0,.7);':'border-color:rgba(180,100,120,.6);'):'';
     const cls=isNeg?'ls-card-neg':'ls-card-neu';
-    const lbl=act?'&#9654; активно':(isNeg?'&#9760; негатив':'диапазон');
-    html+='<div class="ls-card '+cls+'" data-idx="'+i+'" style="'+bst+'"><div class="ls-range-box"><span class="ls-range-label">'+lbl+'</span><div class="ls-range-inner"><input type="number" class="ls-interp-min ls-range-input" value="'+ip.min+'" data-idx="'+i+'"><span class="ls-range-sep">&#8212;</span><input type="number" class="ls-interp-max ls-range-input" value="'+ip.max+'" data-idx="'+i+'"></div></div><textarea class="ls-interp-desc ls-textarea-field" data-idx="'+i+'" rows="3" placeholder="Описание поведения...">'+escHtml(ip.description)+'</textarea><button class="ls-del-interp menu_button ls-del-btn" data-idx="'+i+'"><i class="fa-solid fa-times"></i></button></div>';
+    const lbl=act?'▶ активно':(isNeg?'<i class="fa-solid fa-skull"></i> негатив':'диапазон');
+    html+=`<div class="ls-card ${cls}" data-idx="${i}" style="${bst}">
+      <div class="ls-range-box"><span class="ls-range-label">${lbl}</span>
+        <div class="ls-range-inner">
+          <input type="number" class="ls-interp-min ls-range-input" value="${ip.min}" data-idx="${i}">
+          <span class="ls-range-sep">—</span>
+          <input type="number" class="ls-interp-max ls-range-input" value="${ip.max}" data-idx="${i}">
+        </div>
+      </div>
+      <textarea class="ls-interp-desc ls-textarea-field" data-idx="${i}" rows="3" placeholder="Описание поведения...">${escHtml(ip.description)}</textarea>
+      <button class="ls-del-interp menu_button ls-del-btn" data-idx="${i}"><i class="fa-solid fa-times"></i></button>
+    </div>`;
   });
-  html+='<button id="ls-add-interp" class="menu_button ls-add-btn">+ Добавить диапазон</button>';
+  html+='<button id="ls-add-interp" class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить диапазон</button>';
   ct.innerHTML=html;
   const act=getActiveInterp(),box=document.getElementById('ls-active-state'),txt=document.getElementById('ls-active-text');
   if(box&&txt){if(act?.description?.trim()){txt.textContent=act.description.trim();box.style.display='block';}else box.style.display='none';}
@@ -1010,11 +1117,23 @@ function renderMilestones() {
   const ct=document.getElementById('ls-milestones-container'); if(!ct) return;
   const d=loveData(),arr=d.milestones||[]; let html='';
   arr.forEach((m,i)=>{
-    const reached=d.score>=m.threshold,dc=m.done?' ls-done':'',rs=reached&&!m.done?'border-color:rgba(200,160,80,.65);':'';
+    const reached=d.score>=m.threshold,dc=m.done?' ls-done':'';
+    const rs=reached&&!m.done?'border-color:rgba(200,160,80,.65);':'';
     const st=m.done?'выполнено':(reached?'пора!':'ждёт'),sc=(!m.done&&reached)?' ls-status-due':'';
-    html+='<div class="ls-card ls-card-milestone'+dc+'" data-idx="'+i+'" style="'+rs+'"><div class="ls-milestone-left"><div class="ls-milestone-threshold-wrap"><span class="ls-milestone-threshold-label">от</span><input type="number" class="ls-milestone-thr-input ls-num-input" value="'+m.threshold+'" data-idx="'+i+'" min="0" style="width:56px;"></div><input type="checkbox" class="ls-milestone-done-cb" data-idx="'+i+'" '+(m.done?'checked':'')+'><span class="ls-milestone-status'+sc+'">'+st+'</span></div><textarea class="ls-milestone-desc ls-textarea-field" data-idx="'+i+'" rows="3" placeholder="Что должен сделать персонаж...">'+escHtml(m.description)+'</textarea><button class="ls-del-milestone menu_button ls-del-btn" data-idx="'+i+'"><i class="fa-solid fa-times"></i></button></div>';
+    html+=`<div class="ls-card ls-card-milestone${dc}" data-idx="${i}" style="${rs}">
+      <div class="ls-milestone-left">
+        <div class="ls-milestone-threshold-wrap">
+          <span class="ls-milestone-threshold-label">от</span>
+          <input type="number" class="ls-milestone-thr-input ls-num-input" value="${m.threshold}" data-idx="${i}" min="0" style="width:56px;">
+        </div>
+        <input type="checkbox" class="ls-milestone-done-cb" data-idx="${i}" ${m.done?'checked':''}>
+        <span class="ls-milestone-status${sc}">${st}</span>
+      </div>
+      <textarea class="ls-milestone-desc ls-textarea-field" data-idx="${i}" rows="3" placeholder="Что должен сделать персонаж...">${escHtml(m.description)}</textarea>
+      <button class="ls-del-milestone menu_button ls-del-btn" data-idx="${i}"><i class="fa-solid fa-times"></i></button>
+    </div>`;
   });
-  html+='<button id="ls-add-milestone" class="menu_button ls-add-btn">+ Добавить событие</button>';
+  html+='<button id="ls-add-milestone" class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить событие</button>';
   ct.innerHTML=html; bindMilestonesEv();
 }
 
@@ -1040,6 +1159,7 @@ function bindMilestonesEv() {
   $('#ls-milestone-reset-all').off('click').on('click',()=>{loveData().milestones.forEach(m=>m.done=false);saveSettingsDebounced();updatePromptInjection();renderMilestones();toast('info','Все события сброшены');});
 }
 
+// ─── Промпт ───────────────────────────────────────────────────────────────────
 function buildPrompt() {
   const c=cfg(),d=chatLoveData(); if(!c.isEnabled) return '';
   const changes=(d.scoreChanges||[]).filter(x=>x.description.trim());
@@ -1049,18 +1169,18 @@ function buildPrompt() {
   if(d.score<0) p+='\nNEGATIVE ZONE: character feels hostility, distrust or hatred toward the player.';
   if(active?.description?.trim()) p+='\n\nCURRENT BEHAVIOR (score '+d.score+'):\n'+active.description.trim()+'\n\nPortray the character strictly according to this description.';
   if(pending.length>0){
-    p+='\n\nROMANTIC EVENTS \u2014 YOU MUST INITIATE ALL OF THESE (naturally, within this or the next response):';
+    p+='\n\nROMANTIC EVENTS — YOU MUST INITIATE ALL OF THESE (naturally, within this or the next response):';
     pending.forEach(m=>{p+='\n- '+m.description.trim()+' (unlocked at score '+m.threshold+')';});
     p+='\nAfter completing each event, include at the very end: <!-- [MILESTONE:threshold] --> for each completed one.';
   }
   if(changes.length){p+='\n\nLove Score Changes:';changes.forEach(x=>{p+='\n'+(x.delta>=0?'+':'')+x.delta+': '+x.description.trim();});}
   if(interps.length){p+='\n\nLove Scale:';interps.forEach(x=>{p+='\n'+x.min+' to '+x.max+': '+x.description.trim()+((d.score>=x.min&&d.score<=x.max)?' <- NOW':'');});}
-  if(c.gradualProgression) p+='\\\\n\\\\nSlowBurn RULE: Allowed score changes per response: -2, -1, 0, +1, +2. Default is 0, use \\\\u00b11 for noticeable moments, \\\\u00b12 for significant ones. EXCEPTION: If the change delta matches a configured Score Change rule, its full delta is applied regardless.';
-  const _rtKeys2=Object.keys(RELATION_TYPES).join('|');
+  if(c.gradualProgression) p+='\n\nSlowBurn RULE: Allowed score changes per response: -2, -1, 0, +1, +2. Default is 0. EXCEPTION: If the change delta matches a configured Score Change rule, its full delta is applied.';
+  const _rtKeys=Object.keys(RELATION_TYPES).join('|');
   if(d.relationType==='neutral'||!d.relationType)
-    p+='\n\nOnce the relationship type becomes evident, add once: <!-- [RELATION_TYPE:key] --> where key is one of: '+_rtKeys2+'.';
+    p+='\n\nOnce the relationship type becomes evident, add once: <!-- [RELATION_TYPE:key] --> where key is one of: '+_rtKeys+'.';
   else
-    p+='\n\nIf relationship type changes, update with: <!-- [RELATION_TYPE:key] --> ('+_rtKeys2+').'; 
+    p+='\n\nIf relationship type changes, update with: <!-- [RELATION_TYPE:key] --> ('+_rtKeys+').';
   p+='\n\nAt the end of each response include: <!-- [LOVE_SCORE:X] --> replacing X with the updated score ('+MIN_SCORE+' to '+d.maxScore+').';
   return p;
 }
@@ -1070,6 +1190,7 @@ function updatePromptInjection() {
   catch(e){ toast('error','Ошибка промпта: '+e.message); }
 }
 
+// ─── Обработчик сообщений ─────────────────────────────────────────────────────
 function onMessageReceived() {
   if(!cfg().isEnabled) return;
   try {
@@ -1078,9 +1199,11 @@ function onMessageReceived() {
     const msg=chat[chat.length-1]; if(!msg||msg.is_user) return;
     const text=msg.mes||'';
     const d=chatLoveData();
+
+    // Счёт
     const sm=text.match(/<!--\s*\[LOVE_SCORE:(-?\d+)\]\s*-->/i);
     if(sm){
-      const d=loveData(),c=cfg(); let nv=parseInt(sm[1],10),ov=d.score;
+      const c=cfg(); let nv=parseInt(sm[1],10),ov=d.score;
       if(c.gradualProgression){const _sbDelta=nv-ov;const _sbRule=(d.scoreChanges||[]).find(r=>r.delta===_sbDelta&&r.description.trim());if(!_sbRule){const md=2;nv=Math.max(ov-md,Math.min(ov+md,nv));}}
       d.score=Math.max(MIN_SCORE,Math.min(nv,d.maxScore));
       const delta=d.score-ov;
@@ -1092,29 +1215,45 @@ function onMessageReceived() {
       }
       refreshWidget();syncUI();renderScoreLog();
     }
+
+    // Майлстоны
     const msm=[...text.matchAll(/<!--\s*\[MILESTONE:(\d+)\]\s*-->/gi)];
     msm.forEach(mm=>{
-      const thr=parseInt(mm[1],10),d=loveData();
+      const thr=parseInt(mm[1],10);
       const ms=(d.milestones||[]).find(m=>m.threshold===thr&&!m.done);
       if(ms){ms.done=true;toast('success','Событие: '+ms.description.slice(0,55));renderMilestones();}
     });
+
     // Тип отношений
     const rtm=text.match(/<!--\s*\[RELATION_TYPE:([\w]+)\]\s*-->/i);
     if(rtm){
-      const key=rtm[1].toLowerCase(),d=loveData();
+      const key=rtm[1].toLowerCase();
       if(RELATION_TYPES[key]&&key!==d.relationType){
         d.relationType=key;
-        const rtLabel=RELATION_TYPES[key].label;
-        toast('info','Тип отношений: '+rtLabel);
-        syncUI();updateWidgetGlow(key,d.score<0);
+        toast('info','Тип отношений: '+RELATION_TYPES[key].label);
+        syncUI();
       }
     }
+
     saveSettingsDebounced();updatePromptInjection();
+
+    // Авто-регенерация правил
+    const c=cfg();
+    if(c.autoSuggestEnabled){
+      c._autoSuggestMsgCounter=(c._autoSuggestMsgCounter||0)+1;
+      const interval=Math.max(5,parseInt(c.autoSuggestInterval)||20);
+      if(c._autoSuggestMsgCounter>=interval){
+        c._autoSuggestMsgCounter=0;
+        saveSettingsDebounced();
+        autoRegenAll();
+      }
+    }
   } catch(e){toast('error','Ошибка: '+e.message);}
 }
+
+// ─── Sync UI ──────────────────────────────────────────────────────────────────
 function syncUI() {
   const c=cfg(),d=loveData(),el=id=>document.getElementById(id);
-
   const cb=el('ls-enabled');if(cb) cb.checked=c.isEnabled;
   const v=el('ls-val');if(v) v.value=d.score;
   const m=el('ls-max');if(m) m.value=d.maxScore;
@@ -1127,16 +1266,21 @@ function syncUI() {
   const sc=c.genScope||defaultSettings.genScope;
   const scMap={'ls-scope-changes':'changes','ls-scope-pos-ranges':'positiveRanges','ls-scope-neg-ranges':'negativeRanges','ls-scope-milestones':'milestones','ls-scope-max':'suggestedMax'};
   Object.entries(scMap).forEach(([id,key])=>{const e=el(id);if(e) e.checked=sc[key]??true;});
-  updateCharPreview(getCurrentCharacterCard());
   // Тип отношений
-  const _rtd=loveData().relationType||'neutral';
-  document.querySelectorAll('.ls-rel-type-btn').forEach(b=>{
-    b.classList.toggle('ls-rt-active',b.dataset.rt===_rtd);
-  });
-  const _rtlbl=document.getElementById('ls-rt-label');if(_rtlbl) _rtlbl.textContent=RELATION_TYPES[_rtd]?.label||'';
+  const _rtd=d.relationType||'neutral';
+  document.querySelectorAll('.ls-rel-type-btn').forEach(b=>b.classList.toggle('ls-rt-active',b.dataset.rt===_rtd));
+  const _rtlbl=el('ls-rt-label');if(_rtlbl) _rtlbl.textContent=RELATION_TYPES[_rtd]?.label||'';
+  // Стиль сердца
+  const hsStyle=c.heartStyle||'svg';
+  document.querySelectorAll('input[name="ls-heart-style"]').forEach(r=>r.checked=(r.value===hsStyle));
+  // Авто-подсказки
+  const asEn=el('ls-autosuggest-enabled');if(asEn) asEn.checked=c.autoSuggestEnabled||false;
+  const asInt=el('ls-autosuggest-interval');if(asInt) asInt.value=c.autoSuggestInterval||20;
+  updateCharPreview(getCurrentCharacterCard());
   renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();refreshWidget();
 }
 
+// ─── Основные события ─────────────────────────────────────────────────────────
 function bindMainEvents() {
   $('#ls-enabled').off('change').on('change',function(){cfg().isEnabled=this.checked;saveSettingsDebounced();updatePromptInjection();refreshWidget();});
   $('#ls-val').off('change').on('change',function(){
@@ -1154,19 +1298,49 @@ function bindMainEvents() {
   $(document).off('click','#ls-log-clear').on('click','#ls-log-clear',()=>{loveData().scoreLog=[];saveSettingsDebounced();renderScoreLog();});
   $(document).off('input','#ls-size').on('input','#ls-size',function(){
     const sz=parseInt(this.value),lb=document.getElementById('ls-size-label');if(lb) lb.textContent=sz+'px';
-    applyWidgetSize(sz);cfg().widgetSize=sz;saveSettingsDebounced();
+    applyWidgetSize(sz);cfg().widgetSize=sz;saveSettingsDebounced();refreshWidget();
   });
   $(document).off('click','#ls-reset-pos').on('click','#ls-reset-pos',()=>{
     cfg().widgetPos=null;saveSettingsDebounced();
     const w=document.getElementById('ls-widget');if(w){w.style.top='100px';w.style.bottom='auto';w.style.left='18px';w.style.right='auto';}
     toast('info','Позиция сброшена');
   });
+
+  // Стиль сердца
+  $(document).off('change','input[name="ls-heart-style"]').on('change','input[name="ls-heart-style"]',function(){
+    cfg().heartStyle=this.value;saveSettingsDebounced();refreshWidget();
+    toast('info', this.value==='blur' ? 'Размытое сердце' : 'SVG сердце с заливкой');
+  });
+
+  // Тип отношений — клик = инфо + кнопка Применить
+  $(document).off('click','.ls-rel-type-btn').on('click','.ls-rel-type-btn',function(){
+    const k=this.dataset.rt,t=RELATION_TYPES[k],info=document.getElementById('ls-type-info');
+    if(!info||!t) return;
+    if(info.dataset.showing===k){info.style.display='none';info.dataset.showing='';return;}
+    info.dataset.showing=k;
+    const isActive=loveData().relationType===k;
+    info.innerHTML=`<span style="color:${t.color};font-weight:600;">${escHtml(t.label)}</span> — <span style="opacity:.7;">${escHtml(t.desc)}</span>`
+      +(isActive
+        ?'<div style="font-size:10px;opacity:.4;margin-top:4px;">Текущий тип</div>'
+        :`<button class="menu_button" style="margin-top:6px;width:100%;font-size:11px;" id="ls-set-rt" data-rt="${k}"><i class="fa-solid fa-check" style="margin-right:4px;"></i>Применить</button>`);
+    info.style.display='block';
+    document.getElementById('ls-set-rt')?.addEventListener('click',function(){
+      const d=loveData(),wasHostile=d.relationType==='hostile';
+      d.relationType=this.dataset.rt;
+      saveSettingsDebounced();updatePromptInjection();
+      const isHostile=this.dataset.rt==='hostile';
+      if(wasHostile!==isHostile) flipWidget(); else pulseWidget();
+      syncUI();
+      toast('success','Тип: '+RELATION_TYPES[this.dataset.rt]?.label);
+    });
+  });
+
+  // AI
   $(document).off('input','#ls-gen-endpoint').on('input','#ls-gen-endpoint',function(){cfg().genEndpoint=this.value;saveSettingsDebounced();});
   $(document).off('input','#ls-gen-apikey').on('input','#ls-gen-apikey',function(){cfg().genApiKey=this.value;saveSettingsDebounced();});
   $(document).off('input','#ls-gen-notes').on('input','#ls-gen-notes',function(){cfg().genUserNotes=this.value;saveSettingsDebounced();});
   $(document).off('change','#ls-gen-model-select').on('change','#ls-gen-model-select',function(){cfg().genModel=this.value;saveSettingsDebounced();});
   $(document).off('change','input[name=ls-lang]').on('change','input[name=ls-lang]',function(){cfg().genLang=this.value;saveSettingsDebounced();});
-  // Скоуп
   const scMap={'#ls-scope-changes':'changes','#ls-scope-pos-ranges':'positiveRanges','#ls-scope-neg-ranges':'negativeRanges','#ls-scope-milestones':'milestones','#ls-scope-max':'suggestedMax'};
   Object.entries(scMap).forEach(([sel,key])=>{
     $(document).off('change',sel).on('change',sel,function(){
@@ -1178,15 +1352,21 @@ function bindMainEvents() {
   $(document).off('click','#ls-gen-btn').on('click','#ls-gen-btn',onGenerateClick);
   $(document).off('change','#ls-gen-msg-count').on('change','#ls-gen-msg-count',function(){cfg().chatAnalysisMsgCount=parseInt(this.value)||0;saveSettingsDebounced();});
   $(document).off('click','#ls-analyze-btn').on('click','#ls-analyze-btn',onAnalyzeClick);
-  $(document).off('click','.ls-rel-type-btn').on('click','.ls-rel-type-btn',function(){
-    const k=this.dataset.rt,t=RELATION_TYPES[k],info=document.getElementById('ls-type-info');
-    if(!info||!t) return;
-    if(info.dataset.showing===k){info.style.display='none';info.dataset.showing='';return;}
-    info.dataset.showing=k;
-    info.innerHTML='<span style="color:'+t.color+';font-weight:600;">'+escHtml(t.label)+'</span> — <span style="opacity:.7;">'+escHtml(t.desc)+'</span>';
-    info.style.display='block';
+
+  // Авто-подсказки
+  $(document).off('change','#ls-autosuggest-enabled').on('change','#ls-autosuggest-enabled',function(){
+    cfg().autoSuggestEnabled=this.checked; cfg()._autoSuggestMsgCounter=0; saveSettingsDebounced();
+    toast('info', this.checked?'Авто-регенерация включена':'Авто-регенерация выключена');
   });
-  
+  $(document).off('change','#ls-autosuggest-interval').on('change','#ls-autosuggest-interval',function(){
+    cfg().autoSuggestInterval=Math.max(5,parseInt(this.value)||20); saveSettingsDebounced();
+  });
+  $(document).off('click','#ls-autosuggest-now').on('click','#ls-autosuggest-now',()=>{
+    const btn=document.getElementById('ls-autosuggest-now');
+    if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>';}
+    autoRegenAll().finally(()=>{if(btn){btn.disabled=false;btn.innerHTML='<i class="fa-solid fa-rotate"></i>';}});
+  });
+
   // Пресеты
   $(document).off('click','#ls-preset-save').on('click','#ls-preset-save',()=>{
     const inp=document.getElementById('ls-preset-name-input');savePreset(inp?.value||'');if(inp) inp.value='';
@@ -1200,9 +1380,9 @@ function bindMainEvents() {
     reader.onload=e=>{ importPresetFromJSON(e.target.result); this.value=''; };
     reader.readAsText(file,'utf-8');
   });
-
 }
 
+// ─── Инициализация ────────────────────────────────────────────────────────────
 jQuery(()=>{
   try {
     if(!extension_settings[EXT_NAME]) extension_settings[EXT_NAME]=structuredClone(defaultSettings);
@@ -1212,20 +1392,26 @@ jQuery(()=>{
     if(c.widgetPos&&c.widgetPos.top==null) c.widgetPos=null;
     if(!c.presets) c.presets=[];
     if(!c.genScope) c.genScope={...defaultSettings.genScope};
+    if(!c.heartStyle) c.heartStyle='svg';
+
     $('#extensions_settings').append(settingsPanelHTML());
-    createWidget();bindMainEvents();syncUI();updatePromptInjection();
+    createWidget(); bindMainEvents(); syncUI(); updatePromptInjection();
+
     eventSource.on(event_types.MESSAGE_SENT,()=>updatePromptInjection());
     eventSource.on(event_types.MESSAGE_RECEIVED,onMessageReceived);
+
     if(event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED,()=>{
-  cfg().lastCheckedMessageId=null;
-  // Сброс панели анализа при смене чата
-  const _arCC=document.getElementById('ls-analyze-result');
-  if(_arCC){_arCC.style.display='none';_arCC.innerHTML='';}
-  const _asCC=document.getElementById('ls-analyze-status');
-  if(_asCC) _asCC.textContent='';
-  const _tiCC=document.getElementById('ls-type-info');
-  if(_tiCC){_tiCC.style.display='none';_tiCC.dataset.showing='';}
-  syncUI();updatePromptInjection();
-});
+      cfg().lastCheckedMessageId=null;
+      cfg()._autoSuggestMsgCounter=0;
+      const _ar=document.getElementById('ls-analyze-result');
+      if(_ar){_ar.style.display='none';_ar.innerHTML='';}
+      const _as=document.getElementById('ls-analyze-status');
+      if(_as) _as.textContent='';
+      const _ti=document.getElementById('ls-type-info');
+      if(_ti){_ti.style.display='none';_ti.dataset.showing='';}
+      const _sug=document.getElementById('ls-autosuggest-result');
+      if(_sug){_sug.style.display='none';_sug.innerHTML='';}
+      syncUI();updatePromptInjection();
+    });
   } catch(e){ toast('error','Love Score: ошибка инициализации — '+e.message); }
 });
