@@ -18,6 +18,8 @@ const defaultSettings = {
   _autoSuggestMsgCounter: 0,
   groupMode: false,
   groupNpcs: [],
+  genLorebookEntryIds: [],
+  genUseCard: true,
 };
 
 // ─── Цветовые хелперы ────────────────────────────────────────────────────────
@@ -500,6 +502,46 @@ input[type=range].ls-size-slider{flex:1;accent-color:var(--SmartThemeBodyColor,#
 .ls-sub-acc + .ls-sub-acc { margin-top: 1px; }
 .ls-sub-acc-header { padding-left: 10px !important; font-size: 12px !important; opacity: .78; }
 .ls-sub-acc-header:hover { opacity: 1; }
+/* ── Gen Lorebook Picker ── */
+.ls-gen-lb-entry{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-top:1px solid rgba(255,255,255,.04);transition:background .12s;}
+.ls-gen-lb-entry:hover{background:rgba(255,255,255,.04);}
+.ls-gen-lb-entry input[type=checkbox]{cursor:pointer;accent-color:#a78bfa;flex-shrink:0;width:13px;height:13px;}
+.ls-gen-lb-info{flex:1;min-width:0;}
+/* ── Source cards ── */
+.ls-source-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:6px 0 4px;}
+.ls-source-card{position:relative;display:flex;flex-direction:column;border:1.5px solid rgba(255,255,255,.07);border-radius:10px;padding:11px 10px 10px 12px;cursor:pointer;transition:border-color .2s,background .2s,box-shadow .2s;background:rgba(255,255,255,.02);overflow:hidden;user-select:none;}
+.ls-source-card:hover{border-color:rgba(255,68,102,.22);background:rgba(255,68,102,.03);}
+.ls-source-card input[type=checkbox]{position:absolute;opacity:0;width:0;height:0;pointer-events:none;}
+.ls-source-card.ls-src-active{border-color:rgba(255,68,102,.45);background:rgba(255,68,102,.05);box-shadow:0 0 14px rgba(255,68,102,.08) inset;}
+.ls-source-card.ls-src-active .ls-source-icon{color:#ff4466;opacity:.9;}
+.ls-source-card.ls-src-active .ls-source-check{opacity:1;transform:scale(1);}
+.ls-source-card.ls-src-active .ls-source-card-title{color:#ff7a94;}
+.ls-source-card-inner{display:flex;flex-direction:column;gap:3px;}
+.ls-source-icon{font-size:16px;color:var(--SmartThemeBodyColor,#ccc);opacity:.25;margin-bottom:4px;transition:color .2s,opacity .2s;}
+.ls-source-card-title{font-size:11px;font-weight:700;color:var(--SmartThemeBodyColor,#ddd);line-height:1.3;transition:color .2s;}
+.ls-source-card-sub{font-size:10px;opacity:.35;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:13px;}
+.ls-source-check{position:absolute;top:7px;right:8px;width:16px;height:16px;border-radius:50%;background:#ff4466;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;opacity:0;transform:scale(.5);transition:opacity .18s,transform .18s;}
+.ls-source-card-open{border-color:rgba(255,68,102,.4)!important;background:rgba(255,68,102,.05)!important;}
+.ls-source-card-open .ls-source-icon{color:#ff4466!important;opacity:.8!important;}
+/* source summary bar */
+.ls-source-summary{display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.06);margin:4px 0 10px;min-height:32px;flex-wrap:wrap;}
+.ls-source-summary-empty{font-size:11px;opacity:.28;font-style:italic;width:100%;text-align:center;}
+.ls-src-tag{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:12px;font-size:10px;font-weight:600;white-space:nowrap;}
+.ls-src-tag-card{background:rgba(255,68,102,.1);border:1px solid rgba(255,68,102,.25);color:#ff7a94;}
+.ls-src-tag-lb{background:rgba(255,157,46,.08);border:1px solid rgba(255,157,46,.22);color:#ffb566;}
+.ls-src-plus{font-size:13px;opacity:.3;font-weight:300;line-height:1;}
+/* ── Lorebook panel ── */
+.ls-gen-lb-panel-header{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.06);position:sticky;top:0;background:rgba(12,8,18,.97);backdrop-filter:blur(10px);z-index:2;}
+.ls-gen-lb-panel-title{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;opacity:.45;display:flex;align-items:center;}
+.ls-gen-lb-hbtn{padding:2px 7px!important;font-size:10px!important;opacity:.45;transition:opacity .15s;}
+.ls-gen-lb-hbtn:hover{opacity:.9;}
+/* lorebook entries */
+.ls-gen-lb-entry{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-top:1px solid rgba(255,255,255,.04);transition:background .12s;}
+.ls-gen-lb-entry:hover{background:rgba(255,255,255,.04);}
+.ls-gen-lb-entry input[type=checkbox]{display:none;}
+.ls-gen-lb-info{flex:1;min-width:0;}
+.ls-gen-lb-checked{background:rgba(255,68,102,.05);}
+.ls-gen-lb-check-icon{flex-shrink:0;width:16px;display:flex;align-items:center;justify-content:center;}
 `;
   document.head.appendChild(el);
 }
@@ -838,15 +880,29 @@ function parseAnalyzeResponse(raw) {
 async function autoRegenAll() {
   const c=cfg();
   const base=getBaseUrl(),apiKey=(c.genApiKey||'').trim();
-  if(!base||!apiKey) return; // нет API — тихо пропускаем
-  const char=getCurrentCharacterCard(); if(!char) return;
-  const cardText=buildCharacterCardText(char); if(!cardText.trim()) return;
+  if(!base||!apiKey) return;
 
   const allScope={changes:true,positiveRanges:true,negativeRanges:true,milestones:true,suggestedMax:true};
   const msgN=Math.max(0,parseInt(c.chatAnalysisMsgCount??20));
   const history=msgN>0?getChatHistory(msgN):'';
 
-  // Показываем что идёт авто-реген
+  const useCard = c.genUseCard !== false;
+  const lbText  = getLorebookTextForGen();
+  const hasLb   = lbText.trim().length > 0;
+
+  if (!useCard && !hasLb) return; // нет источника — пропускаем
+
+  let cardText = '';
+  if (useCard) {
+    const char = getCurrentCharacterCard();
+    if (char) { const ct = buildCharacterCardText(char); if (ct.trim()) cardText += ct; }
+  }
+  if (hasLb) {
+    if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n';
+    cardText += lbText;
+  }
+  if (!cardText.trim()) return;
+
   showAutoRegenStatus('⏳ Авто-обновление правил...');
 
   try {
@@ -860,8 +916,11 @@ async function autoRegenAll() {
     if(parsed.milestones.length)  d.milestones=parsed.milestones;
     if(parsed.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; c.maxScore=parsed.suggestedMax; }
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
-    showAutoRegenStatus('✅ Правила обновлены для: '+escHtml(char.name||'персонаж'));
-    toast('info','💫 Авто-реген: правила обновлены для '+( char.name||'персонаж'));
+    const srcParts = [];
+    if (useCard && cardText.trim()) { try { srcParts.push(getCurrentCharacterCard()?.name||'персонаж'); } catch{} }
+    if (hasLb) srcParts.push(c.genLorebookEntryIds.length+' запис. лорбука');
+    showAutoRegenStatus('✅ Правила обновлены: '+escHtml(srcParts.join(' + ')));
+    toast('info','💫 Авто-реген: правила обновлены');
   } catch(e) {
     showAutoRegenStatus('⚠️ Ошибка авто-регена: '+e.message);
   }
@@ -923,19 +982,193 @@ async function onAnalyzeClick() {
   finally { btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-chart-line"></i> Анализировать чат'; }
 }
 
+// ─── Лорбук-пикер для AI генерации ───────────────────────────────────────────
+function renderGenLorebookPicker() {
+  const ct = document.getElementById('ls-gen-lb-list'); if (!ct) return;
+  const entries = getLorebooks();
+  const selected = new Set(cfg().genLorebookEntryIds || []);
+
+  if (!entries.length) {
+    ct.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 12px;opacity:.35;text-align:center;">
+      <i class="fa-solid fa-book-open" style="font-size:22px;"></i>
+      <div style="font-size:11px;font-style:italic;line-height:1.5;">Нет записей — подключи лорбук к персонажу</div>
+    </div>`;
+    return;
+  }
+
+  // Группируем по источнику
+  const groups = {};
+  entries.forEach(e => { (groups[e.source] || (groups[e.source] = [])).push(e); });
+
+  ct.innerHTML = Object.entries(groups).map(([src, ents]) => {
+    const srcLabel = src === 'embedded' ? 'Встроенный лорбук' : src;
+    const allChecked = ents.every(e => selected.has(e.id));
+    return `<div class="ls-lb-group">
+      <div class="ls-lb-group-title" style="display:flex;align-items:center;gap:0;">
+        <i class="fa-solid fa-layer-group" style="margin-right:5px;font-size:9px;opacity:.4;"></i>${escHtml(srcLabel)}
+        <div style="margin-left:auto;display:flex;gap:3px;">
+          <button class="menu_button ls-gen-lb-sel-all ls-gen-lb-hbtn" data-src="${escHtml(src)}" title="Выбрать все в группе" style="${allChecked?'opacity:.3;':''}"><i class="fa-solid fa-check-double"></i></button>
+          <button class="menu_button ls-gen-lb-sel-none ls-gen-lb-hbtn ls-del-btn" data-src="${escHtml(src)}" title="Снять все в группе"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+      ${ents.map(e => {
+        const isChecked = selected.has(e.id);
+        const preview = (e.content || '').slice(0, 80).replace(/\n/g,' ');
+        return `<label class="ls-gen-lb-entry${isChecked?' ls-gen-lb-checked':''}" title="${escHtml((e.keys||[]).join(', '))}">
+          <input type="checkbox" class="ls-gen-lb-cb" data-lbid="${escHtml(e.id)}" data-src="${escHtml(src)}"${isChecked?' checked':''}>
+          <div class="ls-gen-lb-check-icon"><i class="fa-solid fa-${isChecked?'square-check':'square'}" style="color:${isChecked?'#ff4466':'rgba(255,255,255,.15)'};font-size:13px;"></i></div>
+          <div class="ls-gen-lb-info">
+            <div style="font-size:11px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);display:flex;align-items:center;gap:4px;">
+              <i class="fa-solid fa-feather-pointed" style="font-size:9px;opacity:.35;"></i>${escHtml(e.label)}
+            </div>
+            ${preview?`<div style="font-size:10px;opacity:.3;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-top:1px;">${escHtml(preview)}${(e.content||'').length>80?'…':''}</div>`:''}
+          </div>
+        </label>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  _updateGenLbCounter();
+
+  // Чекбоксы
+  $(ct).off('change', '.ls-gen-lb-cb').on('change', '.ls-gen-lb-cb', function () {
+    const id = this.dataset.lbid;
+    const ids = new Set(cfg().genLorebookEntryIds || []);
+    if (this.checked) ids.add(id); else ids.delete(id);
+    cfg().genLorebookEntryIds = [...ids];
+    saveSettingsDebounced();
+    _updateGenLbCounter();
+    // обновить иконку чекбокса без полного ре-рендера
+    const icon = this.closest('.ls-gen-lb-entry')?.querySelector('.ls-gen-lb-check-icon i');
+    if (icon) {
+      icon.className = `fa-solid fa-${this.checked?'square-check':'square'}`;
+      icon.style.color = this.checked ? '#ff4466' : 'rgba(255,255,255,.15)';
+    }
+    this.closest('.ls-gen-lb-entry')?.classList.toggle('ls-gen-lb-checked', this.checked);
+  });
+
+  // Выбрать все / ничего в группе
+  $(ct).off('click', '.ls-gen-lb-sel-all').on('click', '.ls-gen-lb-sel-all', function (ev) {
+    ev.preventDefault();
+    const src = this.dataset.src;
+    const ids = new Set(cfg().genLorebookEntryIds || []);
+    ct.querySelectorAll(`.ls-gen-lb-cb[data-src="${src}"]`).forEach(cb => { ids.add(cb.dataset.lbid); cb.checked = true; });
+    cfg().genLorebookEntryIds = [...ids]; saveSettingsDebounced(); renderGenLorebookPicker();
+  });
+  $(ct).off('click', '.ls-gen-lb-sel-none').on('click', '.ls-gen-lb-sel-none', function (ev) {
+    ev.preventDefault();
+    const src = this.dataset.src;
+    const ids = new Set(cfg().genLorebookEntryIds || []);
+    ct.querySelectorAll(`.ls-gen-lb-cb[data-src="${src}"]`).forEach(cb => { ids.delete(cb.dataset.lbid); cb.checked = false; });
+    cfg().genLorebookEntryIds = [...ids]; saveSettingsDebounced(); renderGenLorebookPicker();
+  });
+}
+
+function _updateGenLbCounter() {
+  const ids = cfg().genLorebookEntryIds || [];
+  const lbl = document.getElementById('ls-gen-lb-count');
+  if (lbl) lbl.textContent = ids.length ? `${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'} выбрано` : 'не выбрано';
+
+  // Обновляем состояние карточки лорбука
+  const lbCard = document.getElementById('ls-src-lb-label');
+  const lbCb   = document.getElementById('ls-gen-use-lb');
+  if (lbCard && lbCb) {
+    const active = ids.length > 0;
+    lbCard.classList.toggle('ls-src-active', active);
+    lbCb.checked = active;
+  }
+  _syncSourceCards();
+}
+
+function _syncSourceCards() {
+  const useCard = document.getElementById('ls-gen-use-card');
+  const cardLbl = document.getElementById('ls-src-card-label');
+  if (useCard && cardLbl) cardLbl.classList.toggle('ls-src-active', useCard.checked);
+
+  const ids = cfg().genLorebookEntryIds || [];
+  const lbLbl = document.getElementById('ls-src-lb-label');
+  if (lbLbl) lbLbl.classList.toggle('ls-src-active', ids.length > 0);
+
+  // Имя персонажа в подписи карточки
+  const nameEl = document.getElementById('ls-src-card-name');
+  if (nameEl) {
+    try { const ch = getCurrentCharacterCard(); nameEl.textContent = ch?.name || '—'; } catch { nameEl.textContent = '—'; }
+  }
+
+  // Подсказка на лорбук-карточке — только счётчик, без "нажми"
+  const lbSub = document.getElementById('ls-src-lb-sub');
+  if (lbSub) {
+    if (ids.length > 0) lbSub.textContent = `${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'}`;
+    else lbSub.textContent = '—';
+  }
+
+  // Строка активных источников
+  const summary = document.getElementById('ls-source-summary');
+  if (summary) {
+    const cardOn = useCard?.checked;
+    const lbOn   = ids.length > 0;
+    if (!cardOn && !lbOn) {
+      summary.innerHTML = '<span class="ls-source-summary-empty"><i class="fa-solid fa-triangle-exclamation" style="margin-right:5px;color:#f59e0b;opacity:.7;"></i>Выбери хотя бы один источник</span>';
+    } else {
+      let parts = [];
+      if (cardOn) {
+        try { const ch = getCurrentCharacterCard(); parts.push(`<span class="ls-src-tag ls-src-tag-card"><i class="fa-solid fa-address-card"></i>${escHtml(ch?.name||'Карточка')}</span>`); }
+        catch { parts.push(`<span class="ls-src-tag ls-src-tag-card"><i class="fa-solid fa-address-card"></i>Карточка</span>`); }
+      }
+      if (lbOn) parts.push(`<span class="ls-src-tag ls-src-tag-lb"><i class="fa-solid fa-book-bookmark"></i>${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'}</span>`);
+      summary.innerHTML = parts.length === 2
+        ? parts[0] + '<span class="ls-src-plus">+</span>' + parts[1]
+        : parts[0];
+    }
+  }
+}
+
+function getLorebookTextForGen() {
+  const ids = cfg().genLorebookEntryIds || [];
+  if (!ids.length) return '';
+  const entries = getLorebooks();
+  const selected = entries.filter(e => ids.includes(e.id));
+  if (!selected.length) return '';
+  return selected.map(e => `[${e.label}]\n${e.content || ''}`).join('\n\n---\n\n');
+}
+
 async function onGenerateClick() {
   const btn=document.getElementById('ls-gen-btn'),status=document.getElementById('ls-gen-status');
   if(!btn||!status) return;
-  btn.disabled=true; btn.textContent='Генерирую...'; status.textContent='Обращаюсь к API...';
+  btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Генерирую...'; status.textContent='Обращаюсь к API...';
   try {
     const scope=getScopeFromUI();
     if(!scope.changes&&!scope.positiveRanges&&!scope.negativeRanges&&!scope.milestones){ status.textContent='Выбери хотя бы одну секцию.'; return; }
     autoSnapshot('До генерации');
-    const char=getCurrentCharacterCard(); if(!char){status.textContent='Персонаж не найден.';return;}
-    const cardText=buildCharacterCardText(char); if(!cardText.trim()){status.textContent='Карточка пустая.';return;}
+
+    const useCard = cfg().genUseCard !== false;
+    const lbText  = getLorebookTextForGen();
+    const hasLb   = lbText.trim().length > 0;
+
+    if (!useCard && !hasLb) { status.textContent='Выбери хотя бы один источник (карточка или лорбук).'; return; }
+
+    let cardText = '';
+    let sourceNames = [];
+
+    if (useCard) {
+      const char = getCurrentCharacterCard();
+      if (char) {
+        const ct = buildCharacterCardText(char);
+        if (ct.trim()) { cardText += ct; sourceNames.push(char.name || 'персонаж'); }
+      }
+    }
+
+    if (hasLb) {
+      if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n';
+      cardText += lbText;
+      sourceNames.push(cfg().genLorebookEntryIds.length + ' запис. лорбука');
+    }
+
+    if (!cardText.trim()) { status.textContent='Нет данных для генерации.'; return; }
+
     const _genMsgN=parseInt(cfg().chatAnalysisMsgCount??0);
     const _genHistory=_genMsgN>0?getChatHistory(_genMsgN):'';
-    status.textContent=_genHistory?'Читаю '+_genMsgN+' сообщ. + карту...':'Читаю карту персонажа...';
+    status.textContent=_genHistory?'Читаю '+_genMsgN+' сообщ. + источник...':'Читаю источник...';
     const raw=await generateLoveScoreWithAI(cardText,scope,_genHistory),parsed=parseAIResponse(raw);
     if(!parsed.ok){status.textContent='Ошибка разбора: '+raw.slice(0,120);return;}
     const d=loveData();
@@ -949,9 +1182,9 @@ async function onGenerateClick() {
     if(parsed.suggestedMax&&scope.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; cfg().maxScore=parsed.suggestedMax; toast('info','Максимум изменён на '+parsed.suggestedMax); }
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
     status.textContent='Готово. Правил: '+parsed.changes.length+', диапазонов: '+parsed.ranges.length+', событий: '+parsed.milestones.length;
-    toast('success','Сгенерировано для '+(char.name||'персонаж'));
+    toast('success','Сгенерировано: '+sourceNames.join(' + '));
   } catch(e){ status.textContent='Ошибка: '+(e.message||e); toast('error',e.message||e); }
-  finally { btn.disabled=false; btn.textContent='Сгенерировать'; }
+  finally { btn.disabled=false; btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать'; }
 }
 
 // ─── Score Log ───────────────────────────────────────────────────────────────
@@ -1493,14 +1726,46 @@ function settingsPanelHTML() {
       <select id="ls-gen-model-select">${curModel?`<option value="${curModel}" selected>${curModel}</option>`:'<option value="">-- нажми обновить --</option>'}</select>
       <button id="ls-refresh-models" class="menu_button ls-refresh-btn" title="Загрузить модели"><i class="fa-solid fa-sync"></i></button>
     </div>
-    <div style="font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;margin:8px 0 0;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Персонаж</div>
-    <div id="ls-char-preview"><img id="ls-char-avatar" class="ls-avatar-hidden" src="" alt=""><span id="ls-char-avatar-name" style="font-size:12px;opacity:.6;"></span></div>
+    <div class="ls-section-title" style="margin-top:10px;"><i class="fa-solid fa-database" style="margin-right:6px;opacity:.7;"></i>Источник данных</div>
+    <div class="ls-hint">Выбери один или оба — ИИ получит всю инфу вместе.</div>
+    <div class="ls-source-grid">
+      <label class="ls-source-card" id="ls-src-card-label">
+        <input type="checkbox" id="ls-gen-use-card"${c.genUseCard!==false?' checked':''}>
+        <div class="ls-source-card-inner">
+          <i class="fa-solid fa-address-card ls-source-icon"></i>
+          <div class="ls-source-card-title">Карточка</div>
+          <div class="ls-source-card-sub" id="ls-src-card-name">&nbsp;</div>
+        </div>
+        <div class="ls-source-check"><i class="fa-solid fa-check"></i></div>
+      </label>
+      <label class="ls-source-card" id="ls-src-lb-label">
+        <input type="checkbox" id="ls-gen-use-lb"${(cfg().genLorebookEntryIds||[]).length>0?' checked':''} style="display:none">
+        <div class="ls-source-card-inner">
+          <i class="fa-solid fa-book-bookmark ls-source-icon"></i>
+          <div class="ls-source-card-title">Лорбук</div>
+          <div class="ls-source-card-sub" id="ls-src-lb-sub">&nbsp;</div>
+        </div>
+        <div class="ls-source-check"><i class="fa-solid fa-check"></i></div>
+      </label>
+    </div>
+    <div id="ls-gen-lb-panel" style="display:none;border:1px solid rgba(255,68,102,.15);border-radius:10px;overflow:hidden;margin:4px 0 6px;max-height:300px;overflow-y:auto;background:rgba(10,4,8,.4);backdrop-filter:blur(6px);">
+      <div class="ls-gen-lb-panel-header">
+        <span class="ls-gen-lb-panel-title"><i class="fa-solid fa-book-open" style="margin-right:6px;color:#ff4466;opacity:.7;"></i>Записи лорбука &nbsp;<span id="ls-gen-lb-count" style="font-weight:400;opacity:.5;text-transform:none;letter-spacing:0;"></span></span>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <button id="ls-gen-lb-refresh" class="menu_button ls-gen-lb-hbtn" title="Обновить список"><i class="fa-solid fa-arrows-rotate"></i></button>
+          <button id="ls-gen-lb-close" class="menu_button ls-gen-lb-hbtn" title="Свернуть"><i class="fa-solid fa-chevron-up"></i></button>
+        </div>
+      </div>
+      <div id="ls-gen-lb-list"></div>
+    </div>
+    <div id="ls-source-summary" class="ls-source-summary"></div>
+    <div id="ls-char-preview" style="margin-bottom:6px;"><img id="ls-char-avatar" class="ls-avatar-hidden" src="" alt=""><span id="ls-char-avatar-name" style="font-size:12px;opacity:.6;"></span></div>
     <div class="ls-row" style="margin-bottom:6px;gap:6px;">
       <span style="font-size:12px;opacity:.6;white-space:nowrap">Сообщений из чата:&nbsp;</span>
       <input type="number" id="ls-gen-msg-count" class="ls-num-input" min="0" max="200" style="width:60px" value="${c.chatAnalysisMsgCount||20}">
       <span style="font-size:10px;opacity:.35;margin-left:2px">0 = без истории</span>
     </div>
-    <button id="ls-gen-btn" class="menu_button" style="width:100%">Сгенерировать</button>
+    <button id="ls-gen-btn" class="menu_button" style="width:100%;display:flex;align-items:center;justify-content:center;gap:7px;"><i class="fa-solid fa-wand-magic-sparkles"></i>Сгенерировать</button>
     <div id="ls-gen-status"></div>
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.08));">
       <div class="ls-section-title" style="margin-top:0;">Анализ чата</div>
@@ -1939,6 +2204,8 @@ function syncUI() {
   updateCharPreview(getCurrentCharacterCard());
   renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();
   if(cfg().groupMode) renderGroupNpcs();
+  _updateGenLbCounter();
+  _syncSourceCards();
   refreshWidget();
 }
 
@@ -2018,6 +2285,39 @@ function bindMainEvents() {
   $(document).off('click','#ls-gen-btn').on('click','#ls-gen-btn',onGenerateClick);
   $(document).off('change','#ls-gen-msg-count').on('change','#ls-gen-msg-count',function(){cfg().chatAnalysisMsgCount=parseInt(this.value)||0;saveSettingsDebounced();});
   $(document).off('click','#ls-analyze-btn').on('click','#ls-analyze-btn',onAnalyzeClick);
+
+  // ── Источник данных: карточка ──
+  $(document).off('change','#ls-gen-use-card').on('change','#ls-gen-use-card',function(){
+    cfg().genUseCard=this.checked; saveSettingsDebounced(); _syncSourceCards();
+    toast('info', this.checked ? 'Карточка включена' : 'Карточка отключена');
+  });
+
+  // ── Источник данных: лорбук-карточка (клик открывает пикер) ──
+  $(document).off('click','#ls-src-lb-label').on('click','#ls-src-lb-label',function(ev){
+    ev.preventDefault();
+    const panel = document.getElementById('ls-gen-lb-panel');
+    if (!panel) return;
+    const isOpen = panel.style.display !== 'none';
+    if (isOpen) {
+      panel.style.display = 'none';
+      this.classList.remove('ls-source-card-open');
+    } else {
+      panel.style.display = 'block';
+      this.classList.add('ls-source-card-open');
+      renderGenLorebookPicker();
+    }
+  });
+
+  // ── Кнопки внутри пикера ──
+  $(document).off('click','#ls-gen-lb-close').on('click','#ls-gen-lb-close',function(){
+    const panel=document.getElementById('ls-gen-lb-panel');
+    const lbLbl=document.getElementById('ls-src-lb-label');
+    if(panel) panel.style.display='none';
+    if(lbLbl) lbLbl.classList.remove('ls-source-card-open');
+  });
+  $(document).off('click','#ls-gen-lb-refresh').on('click','#ls-gen-lb-refresh',function(){
+    renderGenLorebookPicker(); toast('info','Список обновлён');
+  });
 
   // Авто-подсказки
   $(document).off('change','#ls-autosuggest-enabled').on('change','#ls-autosuggest-enabled',function(){
@@ -2102,6 +2402,8 @@ jQuery(()=>{
     if(!c.heartStyle) c.heartStyle='svg';
     if(!c.groupNpcs) c.groupNpcs=[];
     if(c.groupMode==null) c.groupMode=false;
+    if(!c.genLorebookEntryIds) c.genLorebookEntryIds=[];
+    if(c.genUseCard==null) c.genUseCard=true;
 
     $('#extensions_settings').append(settingsPanelHTML());
     createWidget(); bindMainEvents(); syncUI(); updatePromptInjection();
