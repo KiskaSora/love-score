@@ -940,8 +940,23 @@ async function onAnalyzeClick() {
   btn.disabled=true; btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Анализирую...';
   status.textContent='Запрос к API...'; if(result) result.style.display='none';
   try {
-    const char=getCurrentCharacterCard(); if(!char){status.textContent='Нет персонажа.';return;}
-    const cardText=buildCharacterCardText(char); if(!cardText.trim()){status.textContent='Пустая карта.';return;}
+    const useCard = cfg().genUseCard !== false;
+    const lbText  = getLorebookTextForGen();
+    const hasLb   = lbText.trim().length > 0;
+
+    if (!useCard && !hasLb) { status.textContent='Выбери хотя бы один источник (карточка или лорбук).'; return; }
+
+    let cardText = '';
+    if (useCard) {
+      const char = getCurrentCharacterCard();
+      if (char) { const ct = buildCharacterCardText(char); if (ct.trim()) cardText += ct; }
+    }
+    if (hasLb) {
+      if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n';
+      cardText += lbText;
+    }
+    if (!cardText.trim()) { status.textContent='Нет данных для анализа.'; return; }
+
     const n=parseInt(cfg().chatAnalysisMsgCount??20);
     const history=getChatHistory(n); if(!history.trim()){status.textContent='Нет сообщений в чате.';return;}
     status.textContent='Анализирую '+n+' сообщений...';
@@ -1998,6 +2013,7 @@ function buildPrompt() {
       p+='\n═══════════════════════════════════════';
     }
   }
+
   return p;
 }
 
