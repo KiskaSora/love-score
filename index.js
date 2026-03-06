@@ -918,7 +918,7 @@ async function autoRegenAll() {
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
     const srcParts = [];
     if (useCard && cardText.trim()) { try { srcParts.push(getCurrentCharacterCard()?.name||'персонаж'); } catch{} }
-    if (hasLb) srcParts.push(c.genLorebookEntryIds.length+' запис. лорбука');
+    if (hasLb) srcParts.push(_getValidLbIds().length+' запис. лорбука');
     showAutoRegenStatus('✅ Правила обновлены: '+escHtml(srcParts.join(' + ')));
     toast('info','💫 Авто-реген: правила обновлены');
   } catch(e) {
@@ -1064,18 +1064,25 @@ function renderGenLorebookPicker() {
   });
 }
 
-function _updateGenLbCounter() {
-  const ids = cfg().genLorebookEntryIds || [];
-  const lbl = document.getElementById('ls-gen-lb-count');
-  if (lbl) lbl.textContent = ids.length ? `${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'} выбрано` : 'не выбрано';
+function _getValidLbIds() {
+  const saved = cfg().genLorebookEntryIds || [];
+  if (!saved.length) return [];
+  try {
+    const available = new Set(getLorebooks().map(e => e.id));
+    return saved.filter(id => available.has(id));
+  } catch { return saved; }
+}
 
-  // Обновляем состояние карточки лорбука
+function _updateGenLbCounter() {
+  const ids = _getValidLbIds();
+  const lbl = document.getElementById('ls-gen-lb-count');
+  if (lbl) lbl.textContent = ids.length ? `${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'} выбрано` : '';
+
   const lbCard = document.getElementById('ls-src-lb-label');
   const lbCb   = document.getElementById('ls-gen-use-lb');
   if (lbCard && lbCb) {
-    const active = ids.length > 0;
-    lbCard.classList.toggle('ls-src-active', active);
-    lbCb.checked = active;
+    lbCard.classList.toggle('ls-src-active', ids.length > 0);
+    lbCb.checked = ids.length > 0;
   }
   _syncSourceCards();
 }
@@ -1085,7 +1092,7 @@ function _syncSourceCards() {
   const cardLbl = document.getElementById('ls-src-card-label');
   if (useCard && cardLbl) cardLbl.classList.toggle('ls-src-active', useCard.checked);
 
-  const ids = cfg().genLorebookEntryIds || [];
+  const ids = _getValidLbIds();
   const lbLbl = document.getElementById('ls-src-lb-label');
   if (lbLbl) lbLbl.classList.toggle('ls-src-active', ids.length > 0);
 
@@ -1095,7 +1102,7 @@ function _syncSourceCards() {
     try { const ch = getCurrentCharacterCard(); nameEl.textContent = ch?.name || '—'; } catch { nameEl.textContent = '—'; }
   }
 
-  // Подсказка на лорбук-карточке — только счётчик, без "нажми"
+  // Подсказка на лорбук-карточке
   const lbSub = document.getElementById('ls-src-lb-sub');
   if (lbSub) {
     if (ids.length > 0) lbSub.textContent = `${ids.length} ${ids.length===1?'запись':ids.length<5?'записи':'записей'}`;
@@ -1124,7 +1131,7 @@ function _syncSourceCards() {
 }
 
 function getLorebookTextForGen() {
-  const ids = cfg().genLorebookEntryIds || [];
+  const ids = _getValidLbIds();
   if (!ids.length) return '';
   const entries = getLorebooks();
   const selected = entries.filter(e => ids.includes(e.id));
@@ -1161,7 +1168,7 @@ async function onGenerateClick() {
     if (hasLb) {
       if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n';
       cardText += lbText;
-      sourceNames.push(cfg().genLorebookEntryIds.length + ' запис. лорбука');
+      sourceNames.push(_getValidLbIds().length + ' запис. лорбука');
     }
 
     if (!cardText.trim()) { status.textContent='Нет данных для генерации.'; return; }
@@ -1991,7 +1998,6 @@ function buildPrompt() {
       p+='\n═══════════════════════════════════════';
     }
   }
-
   return p;
 }
 
@@ -2097,6 +2103,7 @@ function onMessageReceived() {
     }
   } catch(e){toast('error','Ошибка: '+e.message);}
 }
+
 
 // ─── Отладка ──────────────────────────────────────────────────────────────────
 function renderDebug() {
