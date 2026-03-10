@@ -880,7 +880,11 @@ function parseAnalyzeResponse(raw) {
 async function autoRegenAll() {
   const c=cfg();
   const base=getBaseUrl(),apiKey=(c.genApiKey||'').trim();
-  if(!base||!apiKey) return;
+  if(!base||!apiKey) {
+    toast('warning','💫 Авто-реген: укажи Endpoint и API Key в настройках AI');
+    showAutoRegenStatus('⚠️ Не настроен API — укажи Endpoint и API Key во вкладке «AI генерация»');
+    return;
+  }
 
   const allScope={changes:true,positiveRanges:true,negativeRanges:true,milestones:true,suggestedMax:true};
   const msgN=Math.max(0,parseInt(c.chatAnalysisMsgCount??20));
@@ -890,7 +894,11 @@ async function autoRegenAll() {
   const lbText  = getLorebookTextForGen();
   const hasLb   = lbText.trim().length > 0;
 
-  if (!useCard && !hasLb) return; // нет источника — пропускаем
+  if (!useCard && !hasLb) {
+    toast('warning','💫 Авто-реген: нет источника данных — включи карточку или выбери лорбук в AI');
+    showAutoRegenStatus('⚠️ Нет источника — включи карточку персонажа или выбери записи лорбука');
+    return;
+  }
 
   let cardText = '';
   if (useCard) {
@@ -901,28 +909,40 @@ async function autoRegenAll() {
     if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n';
     cardText += lbText;
   }
-  if (!cardText.trim()) return;
+  if (!cardText.trim()) {
+    toast('warning','💫 Авто-реген: карточка персонажа пустая');
+    showAutoRegenStatus('⚠️ Карточка персонажа пустая — открой чат с персонажем');
+    return;
+  }
 
+  toast('info','💫 Авто-реген: обновляю правила...');
   showAutoRegenStatus('⏳ Авто-обновление правил...');
 
   try {
     autoSnapshot('Авто-реген');
     const raw=await generateLoveScoreWithAI(cardText,allScope,history);
     const parsed=parseAIResponse(raw);
-    if(!parsed.ok) { showAutoRegenStatus('⚠️ Не удалось обновить правила'); return; }
+    if(!parsed.ok) {
+      showAutoRegenStatus('⚠️ Не удалось разобрать ответ AI — попробуй снова');
+      toast('error','💫 Авто-реген: ошибка разбора ответа AI');
+      return;
+    }
     const d=loveData();
-    if(parsed.changes.length)     d.scoreChanges=parsed.changes;
-    if(parsed.ranges.length)      d.scaleInterpretations=parsed.ranges;
-    if(parsed.milestones.length)  d.milestones=parsed.milestones;
-    if(parsed.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; c.maxScore=parsed.suggestedMax; }
+    let updatedParts=[];
+    if(parsed.changes.length)     { d.scoreChanges=parsed.changes; updatedParts.push('правил: '+parsed.changes.length); }
+    if(parsed.ranges.length)      { d.scaleInterpretations=parsed.ranges; updatedParts.push('диапазонов: '+parsed.ranges.length); }
+    if(parsed.milestones.length)  { d.milestones=parsed.milestones; updatedParts.push('событий: '+parsed.milestones.length); }
+    if(parsed.suggestedMax&&parsed.suggestedMax!==d.maxScore){ d.maxScore=parsed.suggestedMax; c.maxScore=parsed.suggestedMax; updatedParts.push('макс: '+parsed.suggestedMax); }
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
     const srcParts = [];
     if (useCard && cardText.trim()) { try { srcParts.push(getCurrentCharacterCard()?.name||'персонаж'); } catch{} }
     if (hasLb) srcParts.push(_getValidLbIds().length+' запис. лорбука');
-    showAutoRegenStatus('✅ Правила обновлены: '+escHtml(srcParts.join(' + ')));
-    toast('info','💫 Авто-реген: правила обновлены');
+    const summary = updatedParts.length ? ' ('+updatedParts.join(', ')+')' : '';
+    showAutoRegenStatus('✅ Правила обновлены: '+escHtml(srcParts.join(' + '))+escHtml(summary));
+    toast('success','💫 Авто-реген: правила обновлены'+summary);
   } catch(e) {
     showAutoRegenStatus('⚠️ Ошибка авто-регена: '+e.message);
+    toast('error','💫 Авто-реген: '+e.message.slice(0,80));
   }
 }
 
@@ -1808,6 +1828,7 @@ function settingsPanelHTML() {
         <span style="font-size:12px;opacity:.6;">сообщений</span>
         <button id="ls-autosuggest-now" class="menu_button" title="Регенерировать прямо сейчас"><i class="fa-solid fa-rotate"></i></button>
       </div>
+      <div id="ls-autosuggest-progress" style="font-size:11px;opacity:.45;margin-bottom:4px;min-height:14px;"></div>
       <div id="ls-autosuggest-result"></div>
     </div>`;
 
@@ -2022,6 +2043,8 @@ function updatePromptInjection() {
   catch(e){ toast('error','Ошибка промпта: '+e.message); }
 }
 
+function _pluralMsg(n){return n===1?'сообщение':n<5?'сообщения':'сообщений';}
+
 // ─── Обработчик сообщений ─────────────────────────────────────────────────────
 function onMessageReceived() {
   if(!cfg().isEnabled) return;
@@ -2074,10 +2097,16 @@ function onMessageReceived() {
     if(c.autoSuggestEnabled){
       c._autoSuggestMsgCounter=(c._autoSuggestMsgCounter||0)+1;
       const interval=Math.max(5,parseInt(c.autoSuggestInterval)||20);
+      saveSettingsDebounced(); // сохраняем счётчик после каждого сообщения
       if(c._autoSuggestMsgCounter>=interval){
         c._autoSuggestMsgCounter=0;
         saveSettingsDebounced();
         autoRegenAll();
+      } else {
+        const remaining=interval-c._autoSuggestMsgCounter;
+        if(remaining<=5&&remaining>0){
+          showAutoRegenStatus('\u23f3 Авто-реген через '+remaining+' '+_pluralMsg(remaining)+'...');
+        }
       }
     }
 
@@ -2224,6 +2253,14 @@ function syncUI() {
   // Авто-подсказки
   const asEn=el('ls-autosuggest-enabled');if(asEn) asEn.checked=c.autoSuggestEnabled||false;
   const asInt=el('ls-autosuggest-interval');if(asInt) asInt.value=c.autoSuggestInterval||20;
+  // Показываем прогресс счётчика авто-регена
+  const asProg=el('ls-autosuggest-progress');
+  if(asProg){
+    if(c.autoSuggestEnabled){
+      const _cnt=c._autoSuggestMsgCounter||0,_intv=c.autoSuggestInterval||20;
+      asProg.textContent=_cnt>0?('Прогресс: '+_cnt+' / '+_intv+' сообщений'):'Счётчик сброшен — жду следующих сообщений';
+    } else { asProg.textContent=''; }
+  }
   updateCharPreview(getCurrentCharacterCard());
   renderChanges();renderInterps();renderMilestones();renderScoreLog();renderPresets();
   if(cfg().groupMode) renderGroupNpcs();
