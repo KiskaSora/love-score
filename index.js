@@ -73,7 +73,7 @@ const mkLoveData = () => ({
 const cfg = () => extension_settings[EXT_NAME];
 
 function toast(type, msg) {
-  try { if (typeof toastr !== 'undefined') toastr[type]?.(msg, 'Love Score', { timeOut: 2300, positionClass: 'toast-top-center' }); } catch {}
+  try { if (typeof toastr !== 'undefined') toastr[type]?.(msg, 'Love Score', { timeOut: 4500, positionClass: 'toast-top-center' }); } catch {}
 }
 
 function getChatId() {
