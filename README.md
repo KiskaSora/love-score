@@ -11,7 +11,7 @@
 1. Открой SillyTavern → **Расширения** → **Установить расширение**
 2. Вставь ссылку на репозиторий:
    ```
-   https://github.com/KiskaSora/love-score
+   https://github.com/KiskaSora/love-score.git
    ```
 3. Нажми **Установить** и перезагрузи страницу
 4. Панель ❤️ Love Score появится в боковой панели расширений
