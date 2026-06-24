@@ -1,5 +1,5 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, toast, loveData }  from './config.js';
+import { cfg, toast, loveData } from './config.js';
 
 // ─── Пресеты ─────────────────────────────────────────────────────────────────
 export function snapshotCurrentData(name) {

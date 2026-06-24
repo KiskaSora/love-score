@@ -1,5 +1,6 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, loveData, RELATION_TYPES, escHtml, getActiveInterp } from './config.js';
+import { cfg, loveData, RELATION_TYPES, escHtml, getActiveInterp, fmtScore, getTrend } from './config.js';
+import { tr as i18nTr } from './i18n.js';
 
 // ─── Цветовые хелперы ────────────────────────────────────────────────────────
 export function _h2r(hex) {
@@ -64,8 +65,8 @@ export function buildTipHTML(rt) {
   const interp   = getActiveInterp();
   const descText = interp?.description?.trim() || '';
   return '<div id="ls-status-tip">'
-    + '<div class="ls-tip-type" style="color:' + rtInfo.color + ';">' + escHtml(rtInfo.label) + '</div>'
-    + (descText ? '<div class="ls-tip-desc">' + escHtml(descText) + '</div>' : '')
+    + '<div class="ls-tip-type" style="color:' + rtInfo.color + ';">' + escHtml(i18nTr(rtInfo.label)) + '</div>'
+    + (descText ? '<div class="ls-tip-desc">' + escHtml(i18nTr(descText)) + '</div>' : '')
     + '</div>';
 }
 
@@ -80,13 +81,15 @@ export function buildHeartSVG(score, max, rt='neutral') {
     const r = Math.max(0, Math.min(1, Math.abs(score)/100));
     fillY = '0'; fillH = (95*r).toFixed(2); tr = 'transform="rotate(180,50,47.5)"';
   }
-  const fs = Math.abs(score) >= 100 ? '13' : '17';
+  const sval = fmtScore(score);
+  const _slen = sval.replace('-','').length;
+  const fs = _slen >= 4 ? '12' : (_slen >= 3 ? '14' : '17');
   return '<svg viewBox="0 0 100 95" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;overflow:visible;">'
     + '<defs><clipPath id="ls-hclip"><path ' + tr + ' d="' + HEART_P + '"/></clipPath></defs>'
     + '<path ' + tr + ' d="' + HEART_P + '" fill="rgba(22,10,16,.88)" stroke="' + stroke + '" stroke-width="2.5"/>'
     + '<rect x="0" y="0" width="100" height="95" clip-path="url(#ls-hclip)" fill="'+(RELATION_TYPES[rt]||RELATION_TYPES.neutral).color+'" opacity="0.13"/>'
     + '<rect id="ls-heart-fill" x="0" y="' + fillY + '" width="100" height="' + fillH + '" clip-path="url(#ls-hclip)" fill="' + col + '" opacity="0.92"/>'
-    + '<text id="ls-score-main" x="50" y="43" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="' + fs + '" font-weight="700" font-family="system-ui,sans-serif">' + escHtml(String(score)) + '</text>'
+    + '<text id="ls-score-main" x="50" y="43" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="' + fs + '" font-weight="700" font-family="system-ui,sans-serif">' + escHtml(sval) + '</text>'
     + '<text id="ls-score-denom" x="50" y="62" text-anchor="middle" dominant-baseline="middle" fill="rgba(255,255,255,.6)" font-size="10" font-family="system-ui,sans-serif">/' + escHtml(String(max)) + '</text>'
     + '</svg>' + buildTipHTML(rt);
 }
@@ -111,12 +114,12 @@ export function buildBlurHeart(score, max, rt='neutral') {
       </svg>
     </div>
     <div class="ls-heart-score">
-      <span class="ls-heart-num">${score}</span>
+      <span class="ls-heart-num">${fmtScore(score)}</span>
       <span class="ls-heart-denom">/${max}</span>
     </div>
     <div class="ls-tip">
-      <div class="ls-tip-type" style="color:${rtInfo.color}">${escHtml(rtInfo.label)}</div>
-      ${descText ? `<div class="ls-tip-desc">${escHtml(descText)}</div>` : ''}
+      <div class="ls-tip-type" style="color:${rtInfo.color}">${escHtml(i18nTr(rtInfo.label))}</div>
+      ${descText ? `<div class="ls-tip-desc">${escHtml(i18nTr(descText))}</div>` : ''}
     </div>
   </div>`;
 }
@@ -131,8 +134,18 @@ export function applyWidgetSize(sz) {
 export function clamp(val, lo, hi) { return Math.max(lo, Math.min(hi, val)); }
 
 export function updateWidgetGlow(rt, isNeg) {
-  const _tc = isNeg ? [60,220,60] : _h2r((RELATION_TYPES[rt] || RELATION_TYPES.neutral).color);
-  const [r,g,b] = _tc;
+  const c = cfg(), d = loveData();
+  let r, g, b;
+  if (isNeg) { [r,g,b] = [60,220,60]; }
+  else { [r,g,b] = _h2r((RELATION_TYPES[rt] || RELATION_TYPES.neutral).color); }
+  // Hardcore: тепло проявляется только с ростом счёта — внизу холодная сталь
+  if (c.hardcoreMode && !isNeg) {
+    const ratio = Math.max(0, Math.min(1, (d.score || 0) / (d.maxScore || 100)));
+    const steel = [120, 130, 150];
+    r = Math.round(steel[0] + (r - steel[0]) * ratio);
+    g = Math.round(steel[1] + (g - steel[1]) * ratio);
+    b = Math.round(steel[2] + (b - steel[2]) * ratio);
+  }
   document.documentElement.style.setProperty('--ls-glow',       `drop-shadow(0 4px 14px rgba(${r},${g},${b},.3))`);
   document.documentElement.style.setProperty('--ls-hover-glow', `drop-shadow(0 6px 22px rgba(${r},${g},${b},.55))`);
 }
@@ -148,10 +161,37 @@ export function _renderWidgetContent(w) {
     w.innerHTML = buildHeartSVG(d.score, d.maxScore, d.relationType || 'neutral');
     updateWidgetGlow(d.relationType || 'neutral', d.score < 0);
   }
+  // Стрелка направления (тренд последних изменений)
+  if (c.showTrend) {
+    const tr = getTrend(d);
+    if (tr !== null) w.appendChild(buildTrendArrow(tr, c.widgetSize || 64));
+  }
 }
 
-export function makeDraggable(w) {
+// ─── Стрелка тренда: мягкий SVG-бейдж со скруглёнными углами и свечением ───────
+export function buildTrendArrow(tr, sz) {
+  const dir   = tr > 0 ? 'up' : tr < 0 ? 'down' : 'flat';
+  const color = tr > 0 ? '#69d66b' : tr < 0 ? '#ff6b6b' : '#b8b8c0';
+  const px    = clamp(Math.round((sz || 64) * 0.30), 13, 22);
+  // Скруглённый треугольник — за счёт жирной обводки с round-стыками; ровень — мягкое тире.
+  const shape = dir === 'up'
+      ? '<path d="M11 5 L17.5 16 L4.5 16 Z" stroke-width="3.4" stroke-linejoin="round"/>'
+    : dir === 'down'
+      ? '<path d="M11 17 L17.5 6 L4.5 6 Z" stroke-width="3.4" stroke-linejoin="round"/>'
+      : '<rect x="4" y="9.4" width="14" height="3.2" rx="1.6"/>';
+  const a = document.createElement('div');
+  a.className = 'ls-trend-arrow ls-trend-' + dir;
+  a.style.width = a.style.height = px + 'px';
+  a.style.setProperty('--ls-trend-col', color);
+  a.innerHTML = '<span class="ls-trend-inner"><svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">' + shape + '</svg></span>';
+  return a;
+}
+
+// onActivate — колбэк открытия панели (обычно openLoveScorePanel). Передаётся
+// из createWidget, чтобы не делать циклический импорт heart.js ↔ ui.js.
+export function makeDraggable(w, onActivate) {
   let drag = false, moved = false, grabX = 0, grabY = 0;
+  let lastTap = 0, tipTimer = null;
   w.addEventListener('pointerdown', e => {
     const r = w.getBoundingClientRect(); grabX = e.clientX-r.left; grabY = e.clientY-r.top;
     drag = true; moved = false; w.setPointerCapture(e.pointerId);
@@ -170,11 +210,24 @@ export function makeDraggable(w) {
   w.addEventListener('pointerup', () => {
     if (!drag) return; drag = false;
     w.style.transition = 'filter .2s ease,transform .35s ease'; w.style.filter = '';
-    if (moved) { cfg().widgetPos = { top: w.style.top, left: w.style.left }; saveSettingsDebounced(); }
+    if (moved) { cfg().widgetPos = { top: w.style.top, left: w.style.left }; saveSettingsDebounced(); return; }
+    // Тап без движения: различаем одиночный и двойной по интервалу (≈320 мс).
+    // Одинаково работает на мыши и тач-экране, т.к. всё на pointer-событиях.
+    const now = Date.now();
+    if (now - lastTap < 320) {
+      lastTap = 0; clearTimeout(tipTimer); w.classList.remove('ls-show-tip');
+      if (cfg().openOnDblClick !== false && typeof onActivate === 'function') onActivate();
+    } else {
+      lastTap = now;
+      // Одиночный тап — временно показать подсказку (тач-эквивалент наведения).
+      w.classList.add('ls-show-tip');
+      clearTimeout(tipTimer);
+      tipTimer = setTimeout(() => w.classList.remove('ls-show-tip'), 2600);
+    }
   });
 }
 
-export function createWidget() {
+export function createWidget(onActivate) {
   if (document.getElementById('ls-widget')) return;
   const d = loveData(), c = cfg();
   const w = document.createElement('div'); w.id = 'ls-widget';
@@ -188,7 +241,7 @@ export function createWidget() {
     w.style.left = clamp(isNaN(sl)?18:sl,  8, window.innerWidth  - sz - 8) + 'px';
     w.style.bottom = 'auto'; w.style.right = 'auto';
   }
-  makeDraggable(w);
+  makeDraggable(w, onActivate);
 }
 
 export function refreshWidget() {

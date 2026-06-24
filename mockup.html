@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Love Score — макет нового UI</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+/* ════════════════════════════════════════════════════════════════
+   ТЕМА SillyTavern (приближение токенов)
+   ════════════════════════════════════════════════════════════════ */
+:root{
+  --SmartThemeBodyColor:#e6e6ea;
+  --SmartThemeBlurTintColor:#1a1620;
+  --input-background-fill:rgba(255,255,255,.04);
+  --border-color:rgba(255,255,255,.1);
+  --accent:#ff4466;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;padding:34px 16px 60px;
+  background:radial-gradient(1200px 600px at 70% -10%,rgba(255,68,102,.10),transparent 60%),#0e0b12;
+  color:var(--SmartThemeBodyColor);
+  font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5;
+}
+.frame-note{max-width:680px;margin:0 auto 8px;font-size:12px;opacity:.5;text-align:center;}
+.frame-tools{max-width:680px;margin:0 auto 14px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
+.frame-tools button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#ccc;
+  border-radius:20px;padding:5px 14px;font-size:11px;cursor:pointer;}
+.frame-tools button:hover{background:rgba(255,255,255,.12);}
+
+/* ════════════════════════════════════════════════════════════════
+   КОНТЕЙНЕР ПОПАПА
+   ════════════════════════════════════════════════════════════════ */
+.ls-panel{max-width:680px;margin:0 auto;background:var(--SmartThemeBlurTintColor);
+  border:1px solid rgba(255,255,255,.12);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.6);overflow:hidden;}
+.ls-panel.narrow{max-width:380px;}
+
+/* ── 1. ШАПКА-ДАШБОРД (сворачиваемая) ── */
+.ls-header{display:flex;align-items:center;gap:16px;padding:16px 20px;
+  background:linear-gradient(135deg,rgba(255,45,85,.12),rgba(168,85,247,.06));
+  border-bottom:1px solid rgba(255,255,255,.08);position:relative;transition:padding .25s;}
+.ls-header-heart{position:relative;width:56px;height:52px;flex-shrink:0;cursor:pointer;
+  filter:drop-shadow(0 4px 16px rgba(255,45,85,.4));transition:transform .3s,width .25s,height .25s;}
+.ls-header-heart:hover{transform:scale(1.06);}
+.ls-header-heart svg{width:100%;height:100%;display:block;}
+.ls-header-heart .hh-score{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;}
+.ls-header-heart .hh-num{font-size:17px;font-weight:800;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.6);line-height:1;}
+.ls-header-heart .hh-den{font-size:9px;color:rgba(255,255,255,.65);line-height:1;margin-top:1px;}
+.ls-trend{position:absolute;top:-4px;right:-6px;color:#69d66b;font-size:13px;filter:drop-shadow(0 0 5px #69d66b);animation:bob 2.4s ease-in-out infinite;}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+.ls-header-info{flex:1;min-width:0;}
+.ls-header-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.ls-header-title .fa-heart{color:var(--accent);}
+.ls-rt-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;
+  background:rgba(255,45,85,.12);border:1px solid rgba(255,45,85,.35);color:#ff2d55;}
+.ls-mini-spark{flex-shrink:0;width:120px;height:40px;opacity:.85;}
+.ls-mini-spark svg{width:100%;height:100%;overflow:visible;}
+.ls-header-collapse{position:absolute;top:8px;right:10px;width:24px;height:24px;border-radius:50%;border:1px solid rgba(255,255,255,.12);
+  background:rgba(0,0,0,.25);color:rgba(255,255,255,.55);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;}
+.ls-header-collapse:hover{color:#fff;background:rgba(0,0,0,.45);}
+/* свёрнутое состояние шапки */
+.ls-panel.collapsed .ls-header{padding:8px 14px;gap:10px;}
+.ls-panel.collapsed .ls-header-heart{width:32px;height:30px;}
+.ls-panel.collapsed .ls-header-title{font-size:14px;margin-bottom:0;}
+.ls-panel.collapsed .ls-rt-chip,.ls-panel.collapsed .ls-mini-spark,.ls-panel.collapsed .ls-trend{display:none;}
+.ls-panel.collapsed .ls-header-collapse i{transform:rotate(180deg);}
+
+/* ── 2. ВКЛАДКИ ── */
+.ls-tabs{display:flex;gap:2px;padding:6px 10px 0;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.07);overflow-x:auto;scrollbar-width:thin;}
+.ls-tab{display:flex;align-items:center;gap:7px;padding:10px 14px;cursor:pointer;font-size:12.5px;font-weight:600;
+  color:rgba(255,255,255,.45);white-space:nowrap;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;border-radius:6px 6px 0 0;}
+.ls-tab i{font-size:13px;}
+.ls-tab:hover{color:rgba(255,255,255,.8);background:rgba(255,255,255,.03);}
+.ls-tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+.ls-body{padding:18px 20px;max-height:58vh;overflow-y:auto;}
+.ls-pane{display:none;}
+.ls-pane.active{display:block;animation:fade .2s ease;}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ════════════════════════════════════════════════════════════════
+   КОМПОНЕНТЫ — скопированы из injectStyles() (реальный код расширки)
+   ════════════════════════════════════════════════════════════════ */
+.ls-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.ls-section-title{font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--SmartThemeBodyColor,#aaa);opacity:.55;margin:14px 0 5px;padding-bottom:4px;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));}
+.ls-section-title:first-child{margin-top:0;}
+.ls-hint{font-size:11px;color:var(--SmartThemeBodyColor,#aaa);opacity:.4;line-height:1.5;margin-bottom:6px;}
+.menu_button{background:var(--input-background-fill);border:1px solid rgba(255,255,255,.14);border-radius:6px;color:#eee;padding:6px 12px;font-size:12px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px;}
+.menu_button:hover{background:rgba(255,255,255,.13);}
+.menu_button.accent{background:linear-gradient(135deg,#ff4466,#a855f7);border:none;font-weight:600;color:#fff;}
+.ls-num-input{background:var(--input-background-fill,rgba(255,255,255,.04));border:1px solid var(--border-color,rgba(255,255,255,.12));border-radius:4px;color:var(--SmartThemeBodyColor,#eee);padding:4px 6px;text-align:center;font-size:13px;transition:border-color .15s;}
+.ls-num-input:focus{outline:none;border-color:rgba(255,255,255,.4);}
+.ls-range-input{background:var(--input-background-fill);border:1px solid var(--border-color);border-radius:4px;color:#eee;padding:4px 6px;text-align:center;font-size:13px;width:68px;box-sizing:border-box;}
+.ls-textarea-field{flex:1;resize:vertical;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#eee;padding:6px 8px;font-family:inherit;font-size:12px;line-height:1.55;box-sizing:border-box;min-height:52px;}
+.ls-textarea-field:focus{outline:none;border-color:rgba(255,255,255,.35);}
+.ls-api-label{font-size:11px;color:#aaa;opacity:.45;margin:6px 0 3px;display:block;}
+.ls-api-field{width:100%;box-sizing:border-box;background:var(--input-background-fill);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#eee;padding:5px 8px;font-size:12px;}
+.ls-api-field:focus{outline:none;border-color:rgba(255,255,255,.35);}
+/* карточки правил/диапазонов/событий */
+.ls-card{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;margin-bottom:6px;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.08);}
+.ls-card-pos{background:rgba(255,180,200,.04);border-color:rgba(255,150,180,.15);}
+.ls-card-neg{background:rgba(40,40,50,.3);border-color:rgba(80,80,100,.2);}
+.ls-card-neu{background:rgba(255,255,255,.02);}
+.ls-card-milestone{background:rgba(255,220,160,.04);border-color:rgba(220,180,120,.15);}
+.ls-card-milestone.ls-done{opacity:.4;}
+.ls-heart-box{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:44px;}
+.ls-heart-icon{font-size:18px;line-height:1;display:block;}
+.ls-heart-icon.ls-icon-pos{color:rgba(255,100,140,.85);filter:drop-shadow(0 0 4px rgba(255,80,120,.4));}
+.ls-heart-icon.ls-icon-neg{color:rgba(110,110,155,.75);}
+.ls-del-btn{padding:3px 7px!important;min-width:unset!important;align-self:flex-start;opacity:.35;transition:opacity .15s;}
+.ls-del-btn:hover{opacity:.8;}
+.ls-range-box{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:148px;}
+.ls-range-label{font-size:9px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:#aaa;opacity:.45;line-height:1;}
+.ls-range-inner{display:flex;align-items:center;gap:6px;}
+.ls-range-sep{opacity:.3;font-size:12px;}
+.ls-add-btn{width:100%;margin-top:4px;opacity:.7;justify-content:center;}
+.ls-add-btn:hover{opacity:1;}
+.ls-milestone-left{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:72px;}
+.ls-milestone-threshold-wrap{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.ls-milestone-threshold-label{font-size:9px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;opacity:.4;line-height:1;}
+.ls-milestone-done-cb{width:15px;height:15px;cursor:pointer;accent-color:#aaa;margin-top:2px;}
+.ls-milestone-status{font-size:9px;opacity:.4;text-align:center;line-height:1.3;}
+.ls-milestone-status.ls-status-due{opacity:.8;font-weight:600;}
+.ls-milestone-reset-row{display:flex;justify-content:flex-end;margin-bottom:6px;}
+.ls-gen-events-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:4px 0 2px;}
+/* кастомный селектор типа отношений */
+.ls-rt-select{position:relative;display:inline-block;min-width:150px;}
+.ls-rt-select.ls-rt-grow{flex:1;min-width:140px;}
+.ls-rt-trigger{display:flex;align-items:center;gap:8px;width:100%;cursor:pointer;box-sizing:border-box;background:var(--input-background-fill);border:1px solid var(--rt-col,rgba(255,255,255,.14));border-radius:6px;padding:5px 9px;font-size:12.5px;color:#eee;transition:border-color .15s,box-shadow .15s,background .15s;text-align:left;}
+.ls-rt-trigger:hover{border-color:var(--rt-col,rgba(255,255,255,.3));background:rgba(255,255,255,.06);}
+.ls-rt-select.ls-rt-open .ls-rt-trigger{border-color:var(--rt-col,rgba(255,255,255,.4));box-shadow:0 0 0 2px color-mix(in srgb,var(--rt-col,#888) 22%,transparent);}
+.ls-rt-trigger .ls-rt-ic{color:var(--rt-col,#aaa);font-size:14px;width:17px;text-align:center;flex-shrink:0;filter:drop-shadow(0 1px 3px color-mix(in srgb,var(--rt-col,#000) 45%,transparent));}
+.ls-rt-trigger .ls-rt-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+.ls-rt-trigger .ls-rt-caret{font-size:10px;opacity:.45;transition:transform .18s;flex-shrink:0;}
+.ls-rt-select.ls-rt-open .ls-rt-caret{transform:rotate(180deg);opacity:.8;}
+.ls-rt-menu{position:absolute;top:calc(100% + 5px);left:0;min-width:100%;width:max-content;max-width:260px;z-index:10005;background:var(--SmartThemeBlurTintColor,#1c1c20);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px;box-shadow:0 10px 34px rgba(0,0,0,.55);display:none;flex-direction:column;gap:1px;max-height:288px;overflow-y:auto;backdrop-filter:blur(14px);}
+.ls-rt-select.ls-rt-open .ls-rt-menu{display:flex;animation:ls-rt-pop .14s ease;}
+@keyframes ls-rt-pop{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
+.ls-rt-opt{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:5px;cursor:pointer;font-size:12.5px;color:#ddd;transition:background .12s;white-space:nowrap;}
+.ls-rt-opt:hover{background:color-mix(in srgb,var(--opt-col,#888) 18%,transparent);}
+.ls-rt-opt .ls-rt-ic{color:var(--opt-col,#aaa);font-size:14px;width:17px;text-align:center;flex-shrink:0;}
+.ls-rt-opt.ls-rt-sel{background:color-mix(in srgb,var(--opt-col,#888) 14%,transparent);font-weight:600;}
+.ls-rt-opt.ls-rt-sel::after{content:"\\f00c";font-family:"Font Awesome 6 Free";font-weight:900;margin-left:auto;font-size:10px;color:var(--opt-col,#aaa);opacity:.85;}
+/* пресеты */
+.ls-preset-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px;padding:7px 9px;border-radius:5px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);}
+.ls-preset-row.ls-preset-snap{border-left:3px solid rgba(100,180,100,.35);opacity:.7;}
+.ls-preset-info{flex:1;min-width:0;}
+.ls-preset-name{font-size:12px;font-weight:600;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ls-preset-meta{font-size:10px;opacity:.35;margin-top:1px;}
+.ls-preset-actions{display:flex;gap:4px;flex-shrink:0;}
+.ls-preset-btn{padding:3px 7px!important;font-size:11px!important;}
+/* лог истории и шрамы */
+.ls-log-entry{display:flex;align-items:center;gap:8px;padding:4px 8px;margin-bottom:2px;border-radius:4px;font-size:11px;}
+.ls-log-delta{font-size:12px;font-weight:800;min-width:36px;white-space:nowrap;}
+.ls-log-reason{color:#ccc;opacity:.7;line-height:1.4;}
+.ls-log-clear{padding:2px 8px!important;font-size:10px!important;opacity:.4;}
+/* источники AI */
+.ls-source-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:6px 0 4px;}
+.ls-source-card{position:relative;display:flex;flex-direction:column;border:1.5px solid rgba(255,255,255,.07);border-radius:10px;padding:11px 10px 10px 12px;cursor:pointer;transition:.2s;background:rgba(255,255,255,.02);overflow:hidden;user-select:none;}
+.ls-source-card:hover{border-color:rgba(255,68,102,.22);background:rgba(255,68,102,.03);}
+.ls-source-card.ls-src-active{border-color:rgba(255,68,102,.45);background:rgba(255,68,102,.05);box-shadow:0 0 14px rgba(255,68,102,.08) inset;}
+.ls-source-card.ls-src-active .ls-source-icon{color:#ff4466;opacity:.9;}
+.ls-source-card.ls-src-active .ls-source-check{opacity:1;transform:scale(1);}
+.ls-source-card.ls-src-active .ls-source-card-title{color:#ff7a94;}
+.ls-source-card-inner{display:flex;flex-direction:column;gap:3px;}
+.ls-source-icon{font-size:16px;color:#ccc;opacity:.25;margin-bottom:4px;transition:.2s;}
+.ls-source-card-title{font-size:11px;font-weight:700;color:#ddd;line-height:1.3;transition:color .2s;}
+.ls-source-card-sub{font-size:10px;opacity:.35;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:13px;}
+.ls-source-check{position:absolute;top:7px;right:8px;width:16px;height:16px;border-radius:50%;background:#ff4466;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;opacity:0;transform:scale(.5);transition:.18s;}
+.ls-scope-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:8px;}
+.ls-scope-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#ccc;}
+.ls-model-row{display:flex;gap:6px;align-items:center;margin-bottom:2px;}
+.ls-model-row select{flex:1;background:var(--input-background-fill);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#eee;padding:5px 8px;font-size:12px;}
+/* NPC окружение */
+.ls-npc-card{position:relative;margin-bottom:8px;border-radius:10px;border:1px solid rgba(255,255,255,.08);overflow:hidden;background:rgba(255,255,255,.015);transition:.2s;}
+.ls-npc-card:hover{border-color:rgba(255,255,255,.15);box-shadow:0 4px 20px rgba(0,0,0,.25);}
+.ls-npc-top{display:flex;align-items:center;gap:10px;padding:10px 10px 8px 12px;}
+.ls-npc-av-wrap{position:relative;width:46px;height:46px;flex-shrink:0;cursor:pointer;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);box-shadow:0 2px 10px rgba(0,0,0,.4);}
+.ls-npc-av-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:20px;color:rgba(255,255,255,.25);}
+.ls-npc-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+.ls-npc-names{display:flex;gap:6px;align-items:center;}
+.ls-npc-name{font-size:13px;font-weight:700;color:#eee;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.08);outline:none;flex:1;min-width:0;padding:1px 2px;}
+.ls-npc-name-en{font-size:10px;color:rgba(255,255,255,.35);background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.08);outline:none;width:80px;flex-shrink:0;padding:1px 2px;font-style:italic;}
+.ls-npc-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.ls-npc-rt-row{display:flex;gap:3px;align-items:center;}
+.ls-npc-rt-btn{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;font-size:11px;cursor:pointer;opacity:.18;transition:.15s;flex-shrink:0;border-radius:50%;}
+.ls-npc-rt-btn:hover{opacity:.5;}
+.ls-npc-rt-btn.ls-rt-active{opacity:1;filter:drop-shadow(0 1px 5px currentColor);}
+.ls-npc-rt-label{font-size:10px;font-weight:600;margin-left:3px;opacity:.8;}
+.ls-npc-sep{opacity:.15;font-size:10px;}
+.ls-npc-score-row{display:flex;align-items:center;gap:3px;margin-left:auto;flex-shrink:0;}
+.ls-npc-adj-btn{width:20px;height:20px;padding:0!important;font-size:10px!important;display:flex;align-items:center;justify-content:center;opacity:.6;}
+.ls-npc-score-val{font-size:13px;font-weight:800;min-width:26px;text-align:center;}
+.ls-npc-score-sep{font-size:10px;opacity:.25;}
+.ls-npc-score-max{width:36px;font-size:10px;background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,.1);color:rgba(255,255,255,.4);outline:none;text-align:center;padding:0;}
+.ls-npc-del-btn{opacity:.2;padding:3px 6px!important;font-size:11px!important;flex-shrink:0;}
+.ls-npc-bar-wrap{height:4px;background:rgba(255,255,255,.05);position:relative;overflow:hidden;}
+.ls-npc-bar-fill{height:100%;}
+.ls-npc-fields{padding:6px 12px 10px;}
+.ls-npc-field{width:100%;box-sizing:border-box;resize:vertical;background:transparent;border:none;border-top:1px solid rgba(255,255,255,.05);color:#bbb;font-family:inherit;font-size:11px;line-height:1.55;padding:5px 0 0;min-height:32px;outline:none;opacity:.65;}
+.ls-npc-rival-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0 0;margin-top:5px;border-top:1px solid rgba(255,255,255,.05);}
+.ls-npc-rival-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;}
+.ls-npc-add-row{display:flex;gap:6px;margin-bottom:8px;}
+.ls-npc-add-row .menu_button{flex:1;justify-content:center;font-size:12px!important;}
+/* отладка */
+.ls-debug-block{margin-bottom:12px;}
+.ls-debug-label{font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;opacity:.35;margin-bottom:4px;display:flex;align-items:center;gap:6px;}
+.ls-debug-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.ls-debug-stat{display:flex;flex-direction:column;padding:6px 10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:5px;}
+.ls-debug-stat-val{font-size:14px;font-weight:800;color:#eee;}
+.ls-debug-stat-key{font-size:9px;opacity:.35;text-transform:uppercase;letter-spacing:.5px;margin-top:1px;}
+#ls-debug-prompt{width:100%;box-sizing:border-box;min-height:120px;resize:vertical;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.07);border-radius:6px;color:rgba(180,255,180,.8);font-family:'Courier New',monospace;font-size:10px;line-height:1.6;padding:10px;white-space:pre-wrap;outline:none;}
+/* модификаторы (новая сетка карточек) */
+.ls-mod-grid{column-count:2;column-gap:9px;}
+.ls-mod-card{position:relative;border:1.5px solid rgba(255,255,255,.08);border-radius:12px;padding:13px 14px;background:rgba(255,255,255,.02);transition:.2s;cursor:pointer;overflow:hidden;break-inside:avoid;margin-bottom:9px;}
+.ls-mod-card:hover{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.035);}
+.ls-mod-card.on{border-color:var(--mc,rgba(255,68,102,.5));background:color-mix(in srgb,var(--mc,#ff4466) 7%,transparent);box-shadow:0 0 22px color-mix(in srgb,var(--mc,#ff4466) 9%,transparent) inset;}
+.ls-mod-head{display:flex;align-items:flex-start;gap:10px;}
+.ls-mod-ic{font-size:17px;opacity:.3;transition:.2s;flex-shrink:0;margin-top:1px;}
+.ls-mod-card.on .ls-mod-ic{opacity:1;color:var(--mc);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--mc) 50%,transparent));}
+.ls-mod-txt{flex:1;min-width:0;}
+.ls-mod-name{font-size:12.5px;font-weight:700;line-height:1.25;}
+.ls-mod-card.on .ls-mod-name{color:var(--mc);}
+.ls-mod-desc{font-size:10px;opacity:.4;line-height:1.45;margin-top:3px;}
+.ls-switch{position:relative;width:34px;height:19px;border-radius:20px;background:rgba(255,255,255,.12);flex-shrink:0;transition:background .2s;}
+.ls-mod-card.on .ls-switch{background:var(--mc);}
+.ls-switch::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.4);}
+.ls-mod-card.on .ls-switch::after{transform:translateX(15px);}
+.ls-mod-body{display:none;margin-top:11px;padding-top:11px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;}
+.ls-mod-card.on .ls-mod-body{display:block;}
+.ls-mod-body .ls-row{margin-bottom:7px;}.ls-mod-body .ls-row:last-child{margin-bottom:0;}
+.ls-mod-body label{opacity:.65;white-space:nowrap;}
+.ls-mod-body .ls-num-input{width:54px;}
+
+@media (max-width:560px){
+  .ls-source-grid,.ls-scope-grid,.ls-debug-stat-grid{grid-template-columns:1fr;}
+  .ls-mod-grid{column-count:1;}
+  .ls-mini-spark{display:none;}
+  .ls-tab span{display:none;}
+  .ls-tab{padding:10px 12px;}
+}
+</style>
+</head>
+<body>
+
+<div class="frame-note">Макет нового UI · Love Score — реальные стили и разметка из кода, новая раскладка</div>
+<div class="frame-tools">
+  <button onclick="document.querySelector('.ls-panel').classList.toggle('narrow')">📱 Узкий / широкий экран</button>
+  <button onclick="toggleHeader()">⬍ Свернуть шапку</button>
+</div>
+
+<div class="ls-panel" id="panel">
+
+  <!-- 1. ШАПКА-ДАШБОРД -->
+  <div class="ls-header">
+    <button class="ls-header-collapse" onclick="toggleHeader()" title="Свернуть"><i class="fa-solid fa-chevron-up"></i></button>
+    <div class="ls-header-heart" title="Двойной тап — открыть">
+      <svg viewBox="0 0 20 18"><defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ff5e7e"/><stop offset="100%" stop-color="#c0002a"/></linearGradient></defs>
+        <path d="M10,17 C10,17 1,10.5 1,5 C1,2.2 3,0.5 5.6,0.5 C7.7,0.5 9.2,2 10,3.6 C10.8,2 12.3,0.5 14.4,0.5 C17,0.5 19,2.2 19,5 C19,10.5 10,17 10,17Z" fill="url(#hg)" stroke="rgba(255,120,150,.5)" stroke-width=".5"/></svg>
+      <div class="hh-score"><div class="hh-num">47</div><div class="hh-den">/100</div></div>
+      <div class="ls-trend"><i class="fa-solid fa-arrow-trend-up"></i></div>
+    </div>
+    <div class="ls-header-info">
+      <div class="ls-header-title"><i class="fa-solid fa-heart"></i> Love Score</div>
+      <span class="ls-rt-chip"><i class="fa-solid fa-heart"></i> Романтика</span>
+    </div>
+    <div class="ls-mini-spark" title="Динамика очков">
+      <svg viewBox="0 0 120 40" preserveAspectRatio="none">
+        <polyline points="0,30 18,28 36,32 54,22 72,24 90,14 108,16 120,8" fill="none" stroke="#ff5e7e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <polyline points="0,30 18,28 36,32 54,22 72,24 90,14 108,16 120,8 120,40 0,40" fill="rgba(255,94,126,.12)" stroke="none"/></svg>
+    </div>
+  </div>
+
+  <!-- 2. ВКЛАДКИ -->
+  <div class="ls-tabs">
+    <div class="ls-tab active" data-tab="overview"><i class="fa-solid fa-chart-simple"></i><span>Обзор</span></div>
+    <div class="ls-tab" data-tab="modes"><i class="fa-solid fa-sliders"></i><span>Режимы</span></div>
+    <div class="ls-tab" data-tab="rules"><i class="fa-solid fa-scroll"></i><span>Правила</span></div>
+    <div class="ls-tab" data-tab="ai"><i class="fa-solid fa-wand-magic-sparkles"></i><span>AI</span></div>
+    <div class="ls-tab" data-tab="group"><i class="fa-solid fa-users"></i><span>Окружение</span></div>
+    <div class="ls-tab" data-tab="presets"><i class="fa-solid fa-floppy-disk"></i><span>Пресеты</span></div>
+    <div class="ls-tab" data-tab="debug"><i class="fa-solid fa-bug"></i><span>Отладка</span></div>
+  </div>
+
+  <div class="ls-body">
+
+    <!-- ════ ОБЗОР ════ -->
+    <div class="ls-pane active" data-pane="overview">
+      <div class="ls-section-title">Очки отношений</div>
+      <div class="ls-row">
+        <input class="ls-num-input" style="width:72px" value="47"> <span style="opacity:.3">/</span>
+        <input class="ls-num-input" style="width:72px" value="100">
+        <button class="menu_button">Сбросить</button>
+        <label style="margin-left:auto;font-size:12px;display:flex;gap:6px;align-items:center;opacity:.85;"><input type="checkbox" checked> Включено</label>
+      </div>
+      <div class="ls-section-title">Тип отношений</div>
+      <div class="ls-row" style="gap:10px;">
+        <i class="fa-solid fa-heart" style="color:#ff2d55;font-size:18px;filter:drop-shadow(0 2px 8px currentColor)"></i>
+        <i class="fa-solid fa-hand-holding-heart" style="color:#ff9d2e;font-size:18px;opacity:.3"></i>
+        <i class="fa-solid fa-people-roof" style="color:#f0c000;font-size:18px;opacity:.3"></i>
+        <i class="fa-solid fa-dove" style="color:#00c49a;font-size:18px;opacity:.3"></i>
+        <i class="fa-solid fa-hand-fist" style="color:#2979ff;font-size:18px;opacity:.3"></i>
+        <i class="fa-solid fa-heart-circle-bolt" style="color:#a855f7;font-size:18px;opacity:.3"></i>
+        <i class="fa-solid fa-heart-crack" style="color:#2e8b00;font-size:18px;opacity:.3"></i>
+        <span style="opacity:.5;font-size:12px;margin-left:6px;">Романтика</span>
+      </div>
+      <div class="ls-section-title" style="display:flex;align-items:center;justify-content:space-between;">История <button class="menu_button ls-log-clear">очистить</button></div>
+      <div class="ls-log-entry" style="background:rgba(80,200,80,.06)"><span class="ls-log-delta" style="color:#6ee86e">↑&thinsp;+4</span><span class="ls-log-reason">Защитила его перед остальными</span></div>
+      <div class="ls-log-entry" style="background:rgba(80,200,80,.06)"><span class="ls-log-delta" style="color:#6ee86e">↑&thinsp;+2</span><span class="ls-log-reason">Тёплый разговор у костра</span></div>
+      <div class="ls-log-entry" style="background:rgba(220,60,60,.06)"><span class="ls-log-delta" style="color:#ff6b6b">↓&thinsp;−3</span><span class="ls-log-reason">Соврала про прошлое</span></div>
+      <div class="ls-log-entry" style="background:rgba(80,200,80,.06)"><span class="ls-log-delta" style="color:#6ee86e">↑&thinsp;+1</span><span class="ls-log-reason">Поделилась едой</span></div>
+      <div class="ls-section-title"><i class="fa-solid fa-bandage" style="margin-right:6px;opacity:.7"></i>Шрамы</div>
+      <div class="ls-row"><input type="text" class="ls-api-field" style="flex:1" placeholder="Записать обиду вручную..."><button class="menu_button">+ Шрам</button></div>
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 9px;border-radius:6px;margin-bottom:5px;background:rgba(200,80,110,.06);border-left:2px solid #d77d8f;">
+        <div style="flex:1"><div style="font-size:12px;line-height:1.4">Бросила его одного во время боя</div>
+          <div style="margin-top:2px"><span style="font-size:10px;color:#d77d8f">открыт · точка 22</span> <span style="font-size:10px;opacity:.3">3 дня назад</span></div></div>
+        <button class="menu_button" style="padding:2px 7px!important;font-size:11px!important"><i class="fa-solid fa-check"></i></button>
+        <button class="menu_button ls-del-btn" style="padding:2px 7px!important;font-size:11px!important"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+
+    <!-- ════ РЕЖИМЫ ════ -->
+    <div class="ls-pane" data-pane="modes">
+      <div class="ls-section-title">Игровые модификаторы</div>
+      <div class="ls-hint">Клик по карточке включает режим и раскрывает его настройки.</div>
+      <div class="ls-mod-grid">
+        <div class="ls-mod-card on" style="--mc:#7dd6c0;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-gauge-high"></i><div class="ls-mod-txt"><div class="ls-mod-name">SlowBurn</div><div class="ls-mod-desc">±2 макс за ответ — медленное сближение</div></div><div class="ls-switch"></div></div></div>
+        <div class="ls-mod-card on" style="--mc:#ff5577;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-skull"></i><div class="ls-mod-txt"><div class="ls-mod-name">Hardcore</div><div class="ls-mod-desc">Сложно набрать, штрафы усилены</div></div><div class="ls-switch"></div></div>
+          <div class="ls-mod-body"><div class="ls-row"><label>Макс. прирост:</label><input class="ls-num-input" value="0.5"></div><div class="ls-row"><label>Множитель штрафов:</label><input class="ls-num-input" value="2"><span style="opacity:.35">×</span></div><div class="ls-row"><label><input type="checkbox"> Decay — остывание при простое</label></div></div></div>
+        <div class="ls-mod-card" style="--mc:#5b8fd6;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-snowflake"></i><div class="ls-mod-txt"><div class="ls-mod-name">Холодный старт</div><div class="ls-mod-desc">Новые чаты начинаются в минусе</div></div><div class="ls-switch"></div></div>
+          <div class="ls-mod-body"><div class="ls-row"><label>Стартовый счёт:</label><input class="ls-num-input" value="-20"></div></div></div>
+        <div class="ls-mod-card on" style="--mc:#c77d8f;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-bandage"></i><div class="ls-mod-txt"><div class="ls-mod-name">Шрамы</div><div class="ls-mod-desc">Память о крупных обидах</div></div><div class="ls-switch"></div></div>
+          <div class="ls-mod-body"><div class="ls-row"><label>Шрам при падении на:</label><input class="ls-num-input" value="15"></div><div class="ls-row"><label>Заживает при +:</label><input class="ls-num-input" value="30"></div></div></div>
+        <div class="ls-mod-card on" style="--mc:#e8923a;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-fire"></i><div class="ls-mod-txt"><div class="ls-mod-name">Серия</div><div class="ls-mod-desc">Бонус за плюсы подряд</div></div><div class="ls-switch"></div></div>
+          <div class="ls-mod-body"><div class="ls-row"><label>Серия от:</label><input class="ls-num-input" value="3"><label>· ×</label><input class="ls-num-input" value="1.5"></div></div></div>
+        <div class="ls-mod-card on" style="--mc:#9a7bd6;"><div class="ls-mod-head"><i class="ls-mod-ic fa-solid fa-water"></i><div class="ls-mod-txt"><div class="ls-mod-name">Импульс</div><div class="ls-mod-desc">Эхо после крупного сдвига</div></div><div class="ls-switch"></div></div>
+          <div class="ls-mod-body"><div class="ls-row"><label>Сдвиг от:</label><input class="ls-num-input" value="10"><label>держится</label><input class="ls-num-input" value="3"><label>ход.</label></div></div></div>
+      </div>
+      <div class="ls-section-title">Вид и инжект</div>
+      <div class="ls-row"><label style="font-size:12px;opacity:.6;">Размер сердца:</label><input type="range" min="36" max="128" value="64" style="flex:1;accent-color:var(--accent)"><span style="opacity:.5;font-size:12px">64px</span></div>
+      <div class="ls-row" style="gap:14px"><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="radio" name="hs" checked> Заливка</label><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="radio" name="hs"> Размытое</label></div>
+      <div class="ls-row" style="gap:14px"><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="checkbox" checked> Стрелка тренда</label><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="checkbox" checked> График истории</label></div>
+      <div class="ls-row"><label style="font-size:12px;opacity:.6;">Тон инжекта:</label><select class="ls-api-field" style="width:auto;flex:0"><option>Строгие правила</option><option>Подсказки</option><option>Внутренний монолог</option></select></div>
+      <div class="ls-row"><label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox"> <i class="fa-solid fa-mask" style="opacity:.7"></i> Скрытые правила (не показывать боту таблицу)</label></div>
+    </div>
+
+    <!-- ════ ПРАВИЛА ════ -->
+    <div class="ls-pane" data-pane="rules">
+      <div class="ls-section-title">Правила изменения</div>
+      <div class="ls-hint">За что растут и падают очки.</div>
+      <div class="ls-card ls-card-pos">
+        <div class="ls-heart-box"><i class="fa-solid fa-heart ls-heart-icon ls-icon-pos"></i><input type="number" class="ls-num-input" value="3" style="width:56px;font-weight:600"></div>
+        <textarea class="ls-textarea-field" rows="2">Искренний комплимент, забота или защита</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+        <div style="flex-basis:100%;display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.06)">
+          <span style="font-size:10px;opacity:.4;text-transform:uppercase">если:</span>
+          <span style="font-size:11px;opacity:.55">счёт от</span><input type="number" class="ls-num-input" value="" placeholder="—" style="width:48px">
+          <span style="font-size:11px;opacity:.55">до</span><input type="number" class="ls-num-input" value="" placeholder="—" style="width:48px">
+        </div>
+      </div>
+      <div class="ls-card ls-card-neg">
+        <div class="ls-heart-box"><i class="fa-solid fa-heart-crack ls-heart-icon ls-icon-neg"></i><input type="number" class="ls-num-input" value="-4" style="width:56px;font-weight:600"></div>
+        <textarea class="ls-textarea-field" rows="2">Ложь или предательство доверия</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+        <div style="flex-basis:100%;display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.06)">
+          <span style="font-size:10px;opacity:.4;text-transform:uppercase">если (необязательно):</span>
+          <span style="font-size:11px;opacity:.55">счёт от</span><input type="number" class="ls-num-input" placeholder="—" style="width:48px">
+          <span style="font-size:11px;opacity:.55">до</span><input type="number" class="ls-num-input" placeholder="—" style="width:48px">
+        </div>
+      </div>
+      <button class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить правило</button>
+
+      <div class="ls-section-title">Поведение по диапазонам</div>
+      <div class="ls-card ls-card-neu" style="border-color:rgba(180,100,120,.6)">
+        <div class="ls-range-box"><span class="ls-range-label"><i class="fa-solid fa-play" style="font-size:8px;margin-right:3px"></i>активно</span>
+          <div class="ls-range-inner"><input type="number" class="ls-range-input" value="40"><span class="ls-range-sep">—</span><input type="number" class="ls-range-input" value="70"></div></div>
+        <textarea class="ls-textarea-field" rows="3">Тёплая привязанность: ищет повод побыть рядом, улыбается чаще, начинает доверять секреты.</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <div class="ls-card ls-card-neg">
+        <div class="ls-range-box"><span class="ls-range-label"><i class="fa-solid fa-skull"></i> негатив</span>
+          <div class="ls-range-inner"><input type="number" class="ls-range-input" value="-100"><span class="ls-range-sep">—</span><input type="number" class="ls-range-input" value="-1"></div></div>
+        <textarea class="ls-textarea-field" rows="3">Холод и недоверие: отвечает односложно, держит дистанцию, ищет повод уйти.</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <button class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить диапазон</button>
+
+      <div class="ls-section-title">Романтические события</div>
+      <div class="ls-hint">При достижении порога персонаж инициирует событие.</div>
+      <div class="ls-gen-events-row">
+        <button class="menu_button accent"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать события</button>
+        <span style="font-size:12px;opacity:.6">до</span><input type="number" class="ls-num-input" value="100" style="width:84px">
+        <span style="font-size:12px;opacity:.6">шт.</span><input type="number" class="ls-num-input" value="8" style="width:56px">
+      </div>
+      <div class="ls-milestone-reset-row"><button class="menu_button">Сбросить все</button></div>
+      <div class="ls-card ls-card-milestone" style="border-color:rgba(200,160,80,.65)">
+        <div class="ls-milestone-left"><div class="ls-milestone-threshold-wrap"><span class="ls-milestone-threshold-label">от</span><input type="number" class="ls-num-input" value="50" style="width:56px"></div>
+          <input type="checkbox" class="ls-milestone-done-cb"><span class="ls-milestone-status ls-status-due">пора!</span></div>
+        <textarea class="ls-textarea-field" rows="3">Впервые признаётся, что думает о тебе перед сном.</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <div class="ls-card ls-card-milestone ls-done">
+        <div class="ls-milestone-left"><div class="ls-milestone-threshold-wrap"><span class="ls-milestone-threshold-label">от</span><input type="number" class="ls-num-input" value="25" style="width:56px"></div>
+          <input type="checkbox" class="ls-milestone-done-cb" checked><span class="ls-milestone-status">выполнено</span></div>
+        <textarea class="ls-textarea-field" rows="3">Берёт тебя за руку, когда никто не видит.</textarea>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <button class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить событие</button>
+
+      <div class="ls-section-title" style="display:flex;align-items:center;gap:8px">
+        <span><i class="fa-solid fa-code-fork" style="margin-right:6px;opacity:.7"></i>Маршруты</span>
+        <label style="margin:0 0 0 auto;display:flex;gap:5px;align-items:center;font-weight:400"><input type="checkbox" checked><span style="font-size:11px;opacity:.7">вкл</span></label>
+      </div>
+      <div class="ls-hint">Ветки развития по типу отношений. Активной становится та, чей тип совпадает с текущим.</div>
+      <div class="ls-gen-events-row"><button class="menu_button accent"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать маршруты</button></div>
+      <!-- маршрут с красивым селектором типа -->
+      <div class="ls-card ls-card-neu" style="border-color:rgba(150,120,210,.7)">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="color:#a855f7;font-size:10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap"><i class="fa-solid fa-play" style="font-size:8px;margin-right:3px"></i>сейчас</span>
+            <input type="text" class="ls-api-field" value="Блестящие Сообщники" style="flex:1;min-width:110px">
+            <!-- ls-rt-select -->
+            <div class="ls-rt-select" style="--rt-col:#a855f7">
+              <button type="button" class="ls-rt-trigger"><span class="ls-rt-ic"><i class="fa-solid fa-heart-circle-bolt"></i></span><span class="ls-rt-name">Одержимость</span><i class="fa-solid fa-chevron-down ls-rt-caret"></i></button>
+              <div class="ls-rt-menu">
+                <div class="ls-rt-opt" data-val="romance" style="--opt-col:#ff2d55"><span class="ls-rt-ic"><i class="fa-solid fa-heart"></i></span><span>Романтика</span></div>
+                <div class="ls-rt-opt" data-val="friendship" style="--opt-col:#ff9d2e"><span class="ls-rt-ic"><i class="fa-solid fa-hand-holding-heart"></i></span><span>Дружба</span></div>
+                <div class="ls-rt-opt" data-val="family" style="--opt-col:#f0c000"><span class="ls-rt-ic"><i class="fa-solid fa-people-roof"></i></span><span>Семья</span></div>
+                <div class="ls-rt-opt" data-val="platonic" style="--opt-col:#00c49a"><span class="ls-rt-ic"><i class="fa-solid fa-dove"></i></span><span>Платоника</span></div>
+                <div class="ls-rt-opt" data-val="rival" style="--opt-col:#2979ff"><span class="ls-rt-ic"><i class="fa-solid fa-hand-fist"></i></span><span>Соперник</span></div>
+                <div class="ls-rt-opt ls-rt-sel" data-val="obsession" style="--opt-col:#a855f7"><span class="ls-rt-ic"><i class="fa-solid fa-heart-circle-bolt"></i></span><span>Одержимость</span></div>
+                <div class="ls-rt-opt" data-val="hostile" style="--opt-col:#2e8b00"><span class="ls-rt-ic"><i class="fa-solid fa-heart-crack"></i></span><span>Ненависть</span></div>
+              </div>
+            </div>
+          </div>
+          <textarea class="ls-textarea-field" rows="2">Хаотичный союз двух disaster-энергий — шопинг, сплетни, совместные схемы. Позвонит в три часа ночи с драмой и тут же приедет с вином, если тебе плохо.</textarea>
+        </div>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <div class="ls-card ls-card-neu">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="color:#ff2d55;font-size:10px;text-transform:uppercase;letter-spacing:.04em">ветка</span>
+            <input type="text" class="ls-api-field" value="Розовый Бархат" style="flex:1;min-width:110px">
+            <div class="ls-rt-select" style="--rt-col:#ff2d55">
+              <button type="button" class="ls-rt-trigger"><span class="ls-rt-ic"><i class="fa-solid fa-heart"></i></span><span class="ls-rt-name">Романтика</span><i class="fa-solid fa-chevron-down ls-rt-caret"></i></button>
+              <div class="ls-rt-menu">
+                <div class="ls-rt-opt ls-rt-sel" data-val="romance" style="--opt-col:#ff2d55"><span class="ls-rt-ic"><i class="fa-solid fa-heart"></i></span><span>Романтика</span></div>
+                <div class="ls-rt-opt" data-val="friendship" style="--opt-col:#ff9d2e"><span class="ls-rt-ic"><i class="fa-solid fa-hand-holding-heart"></i></span><span>Дружба</span></div>
+                <div class="ls-rt-opt" data-val="obsession" style="--opt-col:#a855f7"><span class="ls-rt-ic"><i class="fa-solid fa-heart-circle-bolt"></i></span><span>Одержимость</span></div>
+              </div>
+            </div>
+          </div>
+          <textarea class="ls-textarea-field" rows="2">Брайан позволяет себе быть уязвимым — по-настоящему, без камеры и публики. За бравадой расцветает нежность.</textarea>
+        </div>
+        <button class="menu_button ls-del-btn"><i class="fa-solid fa-times"></i></button>
+      </div>
+      <button class="menu_button ls-add-btn"><i class="fa-solid fa-plus"></i> Добавить ветку</button>
+    </div>
+
+    <!-- ════ AI ════ -->
+    <div class="ls-pane" data-pane="ai">
+      <div class="ls-hint">Выбери что генерировать, подключи API и нажми кнопку.</div>
+      <div style="font-size:11px;opacity:.5;font-weight:600;letter-spacing:.4px;text-transform:uppercase;margin-bottom:5px">Что генерировать</div>
+      <div class="ls-scope-grid">
+        <label class="ls-scope-item"><input type="checkbox" checked> Правила изменений</label>
+        <label class="ls-scope-item"><input type="checkbox" checked> Диапазоны позитив</label>
+        <label class="ls-scope-item"><input type="checkbox"> Диапазоны негатив</label>
+        <label class="ls-scope-item"><input type="checkbox" checked> Романтические события</label>
+        <label class="ls-scope-item"><input type="checkbox"> Предложить макс. очки</label>
+      </div>
+      <div class="ls-row" style="gap:8px"><span style="font-size:12px;opacity:.6">Тип для генерации:</span>
+        <div class="ls-rt-select ls-rt-grow" style="--rt-col:#a855f7">
+          <button type="button" class="ls-rt-trigger"><span class="ls-rt-ic"><i class="fa-solid fa-heart-circle-bolt"></i></span><span class="ls-rt-name">Одержимость</span><i class="fa-solid fa-chevron-down ls-rt-caret"></i></button>
+          <div class="ls-rt-menu">
+            <div class="ls-rt-opt" data-val="" style="--opt-col:#9a9a9a"><span class="ls-rt-ic"><i class="fa-solid fa-shuffle"></i></span><span>— авто (по чату) —</span></div>
+            <div class="ls-rt-opt" data-val="romance" style="--opt-col:#ff2d55"><span class="ls-rt-ic"><i class="fa-solid fa-heart"></i></span><span>Романтика</span></div>
+            <div class="ls-rt-opt ls-rt-sel" data-val="obsession" style="--opt-col:#a855f7"><span class="ls-rt-ic"><i class="fa-solid fa-heart-circle-bolt"></i></span><span>Одержимость</span></div>
+          </div>
+        </div>
+      </div>
+      <label class="ls-api-label">Особые пожелания</label>
+      <textarea class="ls-api-field" rows="2" placeholder="Например: не добавляй события про брак..."></textarea>
+      <label class="ls-api-label">Endpoint</label><input class="ls-api-field" value="https://api.example.com/v1">
+      <label class="ls-api-label">API Key</label><input class="ls-api-field" type="password" value="sk-xxxxxxxx">
+      <label class="ls-api-label">Модель</label>
+      <div class="ls-model-row"><select><option>claude-opus-4-8</option></select><button class="menu_button"><i class="fa-solid fa-sync"></i></button></div>
+      <div class="ls-section-title"><i class="fa-solid fa-database" style="margin-right:6px;opacity:.7"></i>Источник данных</div>
+      <div class="ls-hint">Выбери один или оба — ИИ получит всю инфу вместе.</div>
+      <div class="ls-source-grid">
+        <label class="ls-source-card ls-src-active"><div class="ls-source-card-inner"><i class="fa-solid fa-address-card ls-source-icon"></i><div class="ls-source-card-title">Карточка</div><div class="ls-source-card-sub">Эльвира</div></div><div class="ls-source-check"><i class="fa-solid fa-check"></i></div></label>
+        <label class="ls-source-card"><div class="ls-source-card-inner"><i class="fa-solid fa-book-bookmark ls-source-icon"></i><div class="ls-source-card-title">Лорбук</div><div class="ls-source-card-sub">не выбран</div></div><div class="ls-source-check"><i class="fa-solid fa-check"></i></div></label>
+      </div>
+      <div class="ls-row" style="gap:6px"><span style="font-size:12px;opacity:.6">Сообщений из чата:</span><input type="number" class="ls-num-input" value="20" style="width:60px"><span style="font-size:10px;opacity:.35">0 = без истории</span></div>
+      <button class="menu_button accent" style="width:100%;justify-content:center;margin-top:6px"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать</button>
+      <div class="ls-section-title"><i class="fa-solid fa-chart-line" style="margin-right:5px"></i>Анализ чата</div>
+      <div class="ls-hint">ИИ читает историю чата + карту персонажа и предлагает счёт.</div>
+      <button class="menu_button" style="width:100%;justify-content:center"><i class="fa-solid fa-chart-line"></i> Анализировать чат</button>
+      <div class="ls-section-title"><i class="fa-solid fa-rotate" style="margin-right:5px"></i>Авто-регенерация</div>
+      <div class="ls-row"><label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox"> Включить авто-регенерацию</label></div>
+      <div class="ls-row" style="gap:8px"><span style="font-size:12px;opacity:.6">Каждые</span><input type="number" class="ls-num-input" value="20" style="width:60px"><span style="font-size:12px;opacity:.6">сообщений</span><button class="menu_button"><i class="fa-solid fa-rotate"></i></button></div>
+    </div>
+
+    <!-- ════ ОКРУЖЕНИЕ ════ -->
+    <div class="ls-pane" data-pane="group">
+      <div class="ls-hint">Отслеживай отношения с несколькими персонажами. Данные хранятся отдельно для каждого чата.</div>
+      <div class="ls-row"><label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" checked> Включить режим окружения</label></div>
+      <div class="ls-npc-add-row">
+        <button class="menu_button"><i class="fa-solid fa-book-open"></i> Из лорбука</button>
+        <button class="menu_button"><i class="fa-solid fa-pen-to-square"></i> Создать вручную</button>
+      </div>
+      <div class="ls-npc-add-row"><button class="menu_button" style="flex:1"><i class="fa-solid fa-magnifying-glass"></i> Найти NPC в чате</button></div>
+      <!-- NPC карточка -->
+      <div class="ls-npc-card" style="border-color:rgba(41,121,255,.15)">
+        <div class="ls-npc-top">
+          <div class="ls-npc-av-wrap" style="border-color:rgba(41,121,255,.35)"><div class="ls-npc-av-ph"><i class="fa-solid fa-user"></i></div></div>
+          <div class="ls-npc-body">
+            <div class="ls-npc-names"><input class="ls-npc-name" value="Кассиан"><input class="ls-npc-name-en" value="Cassian"></div>
+            <div class="ls-npc-meta">
+              <div class="ls-npc-rt-row">
+                <span class="ls-npc-rt-btn" style="color:#ff2d55"><i class="fa-solid fa-heart"></i></span>
+                <span class="ls-npc-rt-btn ls-rt-active" style="color:#2979ff"><i class="fa-solid fa-hand-fist"></i></span>
+                <span class="ls-npc-rt-btn" style="color:#a855f7"><i class="fa-solid fa-heart-circle-bolt"></i></span>
+              </div>
+              <span class="ls-npc-rt-label" style="color:#2979ff">Соперник</span>
+              <span class="ls-npc-sep">·</span>
+              <div class="ls-npc-score-row">
+                <button class="menu_button ls-npc-adj-btn">−</button>
+                <span class="ls-npc-score-val" style="color:#2979ff">31</span><span class="ls-npc-score-sep">/</span><input class="ls-npc-score-max" value="100">
+                <button class="menu_button ls-npc-adj-btn">+</button>
+              </div>
+            </div>
+          </div>
+          <button class="menu_button ls-npc-del-btn"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="ls-npc-bar-wrap"><div class="ls-npc-bar-fill" style="width:31%;background:linear-gradient(90deg,rgba(41,121,255,.12),rgba(41,121,255,.82) 65%,#003a99);box-shadow:0 0 6px rgba(41,121,255,.4)"></div></div>
+        <div class="ls-npc-fields">
+          <textarea class="ls-npc-field" rows="2">Самоуверенный наёмник, который вечно соревнуется с тобой за внимание Эльвиры.</textarea>
+          <div class="ls-npc-rival-row"><label class="ls-npc-rival-toggle"><input type="checkbox" checked> Соперник</label>
+            <span style="display:flex;align-items:center;gap:5px"><span style="font-size:11px;opacity:.5">давление</span><input type="number" class="ls-num-input" value="0.5" style="width:50px"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ ПРЕСЕТЫ ════ -->
+    <div class="ls-pane" data-pane="presets">
+      <div class="ls-hint">Сохраняй и загружай наборы правил. Авто-снапшот делается перед каждой генерацией.</div>
+      <div style="padding:8px;border-radius:5px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);margin-bottom:8px">
+        <div style="font-size:11px;opacity:.5;margin-bottom:5px;font-weight:600;text-transform:uppercase">Режим применения</div>
+        <div style="display:flex;gap:10px;margin-bottom:6px"><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="radio" name="lm" checked> Заменить</label><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="radio" name="lm"> Дополнить</label></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><label class="ls-scope-item"><input type="checkbox" checked> Правила</label><label class="ls-scope-item"><input type="checkbox" checked> Диапазоны</label><label class="ls-scope-item"><input type="checkbox" checked> События</label><label class="ls-scope-item"><input type="checkbox" checked> Макс. очки</label></div>
+      </div>
+      <div class="ls-row"><input class="ls-api-field" style="flex:1" placeholder="Название пресета..."><button class="menu_button">Сохранить</button></div>
+      <div class="ls-row"><button class="menu_button"><i class="fa-solid fa-folder-open"></i> Импорт из файла</button></div>
+      <div class="ls-preset-row"><div class="ls-preset-info"><div class="ls-preset-name">Тёмный роман · slowburn</div><div class="ls-preset-meta">30.05.2026 · макс 100</div></div>
+        <div class="ls-preset-actions"><button class="menu_button ls-preset-btn">Загрузить</button><button class="menu_button ls-preset-btn">JSON</button><button class="menu_button ls-preset-btn ls-del-btn"><i class="fa-solid fa-xmark"></i></button></div></div>
+      <div class="ls-preset-row ls-preset-snap"><div class="ls-preset-info"><div class="ls-preset-name">🔄 Авто-снапшот</div><div class="ls-preset-meta">30.05.2026 · макс 100</div></div>
+        <div class="ls-preset-actions"><button class="menu_button ls-preset-btn">Загрузить</button><button class="menu_button ls-preset-btn">JSON</button><button class="menu_button ls-preset-btn ls-del-btn"><i class="fa-solid fa-xmark"></i></button></div></div>
+    </div>
+
+    <!-- ════ ОТЛАДКА ════ -->
+    <div class="ls-pane" data-pane="debug">
+      <div class="ls-hint">Просмотр текущего состояния системы, активных инжектов и как они работают.</div>
+      <div class="ls-row" style="justify-content:space-between"><span style="font-size:12px;opacity:.5"><i class="fa-solid fa-circle-info" style="margin-right:5px"></i>Данные обновляются при открытии вкладки</span><button class="menu_button"><i class="fa-solid fa-rotate"></i> Обновить</button></div>
+      <div class="ls-debug-block">
+        <div class="ls-debug-label"><i class="fa-solid fa-gauge-high"></i> Текущее состояние</div>
+        <div class="ls-debug-stat-grid">
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:#ff2d55">47 / 100</span><span class="ls-debug-stat-key">Love Score</span></div>
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:#ff2d55"><i class="fa-solid fa-heart" style="margin-right:5px;font-size:12px"></i>Романтика</span><span class="ls-debug-stat-key">Тип отношений</span></div>
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val">Тёплая привязанность</span><span class="ls-debug-stat-key">Активный диапазон</span></div>
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val">1</span><span class="ls-debug-stat-key">Событий в очереди</span></div>
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:#ff5577">+0.5 / ×2</span><span class="ls-debug-stat-key">Hardcore</span></div>
+          <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="color:#e8923a">2 / 3</span><span class="ls-debug-stat-key">Серия</span></div>
+        </div>
+      </div>
+      <div class="ls-debug-block">
+        <div class="ls-debug-label"><i class="fa-solid fa-tags"></i> Теги в ответах AI <button class="menu_button" style="padding:2px 8px!important;font-size:10px!important;opacity:.4;margin-left:auto"><i class="fa-solid fa-copy"></i></button></div>
+        <pre style="font-size:10px;line-height:1.8;padding:8px;background:rgba(0,0,0,.3);border-radius:5px;border:1px solid rgba(255,255,255,.06);overflow-x:auto;color:rgba(160,220,255,.85);margin:0">&lt;!-- [LOVE_SCORE:X] --&gt;        — обновить счёт
+&lt;!-- [RELATION_TYPE:key] --&gt;    — установить тип отношений
+&lt;!-- [MILESTONE:threshold] --&gt;  — отметить событие выполненным</pre>
+      </div>
+      <div class="ls-debug-block">
+        <div class="ls-debug-label"><i class="fa-solid fa-code"></i> Текущий промпт-инжект <button class="menu_button" style="padding:2px 8px!important;font-size:10px!important;opacity:.4;margin-left:auto"><i class="fa-solid fa-copy"></i></button></div>
+        <textarea id="ls-debug-prompt" readonly>[Love Score: 47/100 — Романтика]
+Текущее поведение: Тёплая привязанность — ищет повод побыть рядом...
+Активное событие (порог 50): впервые признаётся, что думает о тебе.</textarea>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// вкладки
+document.querySelectorAll('.ls-tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.ls-tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.ls-pane').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.querySelector('.ls-pane[data-pane="'+t.dataset.tab+'"]').classList.add('active');
+});
+// тумблеры модификаторов
+document.querySelectorAll('.ls-mod-card').forEach(c=>c.onclick=e=>{ if(e.target.closest('.ls-mod-body'))return; c.classList.toggle('on'); });
+// карточки источников
+document.querySelectorAll('.ls-source-card').forEach(c=>c.onclick=()=>c.classList.toggle('ls-src-active'));
+// сворачивание шапки
+function toggleHeader(){ document.getElementById('panel').classList.toggle('collapsed'); }
+// кастомный селектор типа отношений
+document.querySelectorAll('.ls-rt-select').forEach(sel=>{
+  const trig=sel.querySelector('.ls-rt-trigger');
+  trig.onclick=e=>{ e.stopPropagation(); document.querySelectorAll('.ls-rt-select.ls-rt-open').forEach(s=>{if(s!==sel)s.classList.remove('ls-rt-open')}); sel.classList.toggle('ls-rt-open'); };
+  sel.querySelectorAll('.ls-rt-opt').forEach(o=>o.onclick=()=>{
+    sel.querySelectorAll('.ls-rt-opt').forEach(x=>x.classList.remove('ls-rt-sel')); o.classList.add('ls-rt-sel');
+    const col=o.style.getPropertyValue('--opt-col'); sel.style.setProperty('--rt-col',col);
+    sel.querySelector('.ls-rt-ic').innerHTML=o.querySelector('.ls-rt-ic').innerHTML;
+    sel.querySelector('.ls-rt-name').textContent=o.querySelector('span:last-child').textContent;
+    sel.classList.remove('ls-rt-open');
+  });
+});
+document.addEventListener('click',()=>document.querySelectorAll('.ls-rt-select.ls-rt-open').forEach(s=>s.classList.remove('ls-rt-open')));
+</script>
+</body>
+</html>

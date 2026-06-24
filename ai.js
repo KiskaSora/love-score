@@ -79,11 +79,15 @@ export async function onRefreshModels() {
 }
 
 // ─── AI генерация ─────────────────────────────────────────────────────────────
-export async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
+export async function generateLoveScoreWithAI(charCard, scope, chatHistory='', opts={}) {
   const c = cfg(), base = getBaseUrl(), apiKey = (c.genApiKey||'').trim(), model = (c.genModel||'').trim() || 'gpt-4o';
   if (!base)   throw new Error('Укажи Endpoint');
   if (!apiKey) throw new Error('Укажи API Key');
   const d = loveData(), maxScore = d.maxScore || 100;
+  // Верхняя граница для генерации СОБЫТИЙ (может быть больше maxScore — события можно тянуть выше)
+  const msMax = Math.max(1, parseInt(opts.milestoneMax) || maxScore);
+  const msCount = parseInt(opts.milestoneCount) || 0;
+  const targetRt = (opts.relationType && opts.relationType !== 'neutral' && RELATION_TYPES[opts.relationType]) ? opts.relationType : null;
   const lang = c.genLang || 'ru', langLabel = lang === 'ru' ? 'Russian' : 'English';
   const userNotes = (c.genUserNotes || '').trim();
   const systemMsg = 'You are configuring a Love Score system for a text-based RPG. Reply with ONLY valid JSON — no explanations, no markdown, no code blocks.';
@@ -102,9 +106,18 @@ export async function generateLoveScoreWithAI(charCard, scope, chatHistory='') {
   let rulesLines = ['RULES:'];
   if (wantChanges)  rulesLines.push('- changes: at least 6 items with varied positive and negative deltas');
   if (wantNegRange) rulesLines.push('- negative ranges (min:'+MIN_SCORE+' to max:-1): describe hostility, hatred, fear — no gaps');
+  if (wantNegRange && c.coldStartEnabled) rulesLines.push('- COLD START is active (chats begin at '+(c.coldStartScore ?? -30)+'): frame the upper negative range (near 0) as a wary, guarded stranger — initial distrust and emotional distance, NOT hatred. Reserve real hostility for the deepest negative values.');
   if (wantPosRange) rulesLines.push('- positive ranges (min:0 to max:'+maxScore+'): describe attraction and love — no gaps');
-  if (wantMs)       rulesLines.push('- milestones: at least 5 POSITIVE thresholds only, ordered ascending');
+  if (wantMs) {
+    rulesLines.push('- milestones: '+(msCount>0 ? 'EXACTLY '+msCount : 'at least 6')+' POSITIVE thresholds only, ordered ascending by threshold.');
+    rulesLines.push('- milestone thresholds MUST be spread evenly across the FULL range from low values (around 10-20) all the way up to '+msMax+'. Do NOT cluster them only at the bottom — include several late-game events in the upper half, and 1-2 climactic events near '+msMax+'. Deeper bonds unlock bigger, rarer events.');
+  }
   if (wantMax)      rulesLines.push('- suggestedMax: suggest higher max (200-300) for cold/distant characters');
+  if (targetRt) {
+    const rt = RELATION_TYPES[targetRt];
+    rulesLines.push('', 'TARGET RELATIONSHIP TYPE: '+rt.label+'.', 'Behavioral guide for this type: '+rt.genGuide,
+      'CRITICAL: Every change rule, range description and milestone MUST embody THIS specific dynamic and its behavioral patterns. The result must read clearly DIFFERENT from generic affection — match the tone and patterns above precisely, not a neutral "they like you more" arc.');
+  }
   rulesLines.push('- All text in '+langLabel);
   if (userNotes)    rulesLines.push('', 'SPECIAL USER INSTRUCTIONS (priority):', userNotes);
   const omitNote = (!wantChanges||!wantPosRange||!wantNegRange||!wantMs) ? 'NOTE: Only generate the fields listed in the schema.' : '';
@@ -280,7 +293,7 @@ export async function onAnalyzeClick(syncUI, renderScoreLog, renderMilestones) {
         '<div class="ls-analyze-score">Рекомендуемый счёт: <strong>'+parsed.suggestedScore+'</strong>'
         +'<span style="opacity:.5;font-size:11px;margin-left:6px">(сейчас '+d.score+', '+(diff!==0?diffStr:'без изменений')+')</span></div>'
         +(_rtInfo ? '<div class="ls-analyze-reltype">'
-          +'<span style="color:'+_rtInfo.color+';font-size:18px;">&#10084;</span>'
+          +'<span style="color:'+_rtInfo.color+';font-size:16px;"><i class="fa-solid '+(_rtInfo.icon||'fa-heart')+'"></i></span>'
           +'<span style="font-size:12px;margin-left:6px;opacity:.8;">'+escHtml(_rtInfo.label)+'</span>'
           +'<button class="menu_button" data-rt="'+parsed.relationType+'" id="ls-rt-confirm-btn" style="margin-left:8px;padding:2px 8px;font-size:11px;">Применить тип</button>'
           +'</div>' : '')
@@ -323,8 +336,9 @@ export async function onGenerateClick(syncUI) {
     if (!cardText.trim()) { status.textContent = 'Нет данных для генерации.'; return; }
     const _genMsgN   = parseInt(cfg().chatAnalysisMsgCount ?? 0);
     const _genHistory = _genMsgN > 0 ? getChatHistory(_genMsgN) : '';
+    const _genRt = document.getElementById('ls-gen-reltype')?.value || loveData().relationType || '';
     status.textContent = _genHistory ? 'Читаю '+_genMsgN+' сообщ. + источник...' : 'Читаю источник...';
-    const raw    = await generateLoveScoreWithAI(cardText, scope, _genHistory);
+    const raw    = await generateLoveScoreWithAI(cardText, scope, _genHistory, { relationType: _genRt });
     const parsed = parseAIResponse(raw);
     if (!parsed.ok) { status.textContent = 'Ошибка разбора: '+raw.slice(0,120); return; }
     const d = loveData();
@@ -341,6 +355,134 @@ export async function onGenerateClick(syncUI) {
     toast('success', 'Сгенерировано: '+sourceNames.join(' + '));
   } catch(e) { status.textContent = 'Ошибка: '+(e.message||e); toast('error', e.message||e); }
   finally { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать'; }
+}
+
+// Собрать текст-источник (карточка + лорбук) по настройкам вкладки AI
+function gatherGenSource() {
+  const useCard = cfg().genUseCard !== false;
+  const lbText  = getLorebookTextForGen();
+  const hasLb   = lbText.trim().length > 0;
+  if (!useCard && !hasLb) return { error: 'Выбери источник (карточка или лорбук) во вкладке AI.' };
+  let cardText = '', sourceNames = [];
+  if (useCard) { const char = getCurrentCharacterCard(); if (char) { const ct = buildCharacterCardText(char); if (ct.trim()) { cardText += ct; sourceNames.push(char.name || 'персонаж'); } } }
+  if (hasLb)   { if (cardText.trim()) cardText += '\n\n═══ LOREBOOK ═══\n\n'; cardText += lbText; sourceNames.push(_getValidLbIds().length+' запис. лорбука'); }
+  if (!cardText.trim()) return { error: 'Нет данных для генерации.' };
+  return { cardText, sourceNames };
+}
+
+// Отдельная генерация ТОЛЬКО романтических событий — правила/диапазоны/тип не трогаются.
+// Можно задать верхний порог (msMax) больше текущего максимума: события растягиваются до него,
+// а максимум при необходимости поднимается, чтобы события могли срабатывать.
+export async function onGenerateEventsClick(syncUI) {
+  const btn = document.getElementById('ls-gen-events-btn'), status = document.getElementById('ls-gen-events-status');
+  if (!btn) return;
+  const d = loveData();
+  const msMax   = Math.max(10, parseInt(document.getElementById('ls-gen-events-max')?.value) || d.maxScore || 100);
+  const msCount = Math.max(0,  parseInt(document.getElementById('ls-gen-events-count')?.value) || 0);
+  const setStat = t => { if (status) status.textContent = t; };
+  btn.disabled = true; const _btnHtml = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерирую...';
+  setStat('Обращаюсь к API...');
+  try {
+    const src = gatherGenSource();
+    if (src.error) { setStat(src.error); return; }
+    autoSnapshot('До генерации событий');
+    // Чтобы события до msMax реально срабатывали, поднимаем максимум (но не понижаем)
+    if (msMax > (d.maxScore || 0)) { d.maxScore = msMax; cfg().maxScore = msMax; toast('info', 'Максимум поднят до '+msMax+' (чтобы события срабатывали)'); }
+    const _msgN = parseInt(cfg().chatAnalysisMsgCount ?? 0);
+    const _history = _msgN > 0 ? getChatHistory(_msgN) : '';
+    const _rt = document.getElementById('ls-gen-reltype')?.value || d.relationType || '';
+    setStat('Генерирую события до '+msMax+'...');
+    const scope  = { changes:false, positiveRanges:false, negativeRanges:false, milestones:true, suggestedMax:false };
+    const raw    = await generateLoveScoreWithAI(src.cardText, scope, _history, { milestoneMax: msMax, milestoneCount: msCount, relationType: _rt });
+    const parsed = parseAIResponse(raw);
+    if (!parsed.ok)               { setStat('Ошибка разбора: '+raw.slice(0,120)); return; }
+    if (!parsed.milestones.length){ setStat('ИИ не вернул события — попробуй снова.'); return; }
+    d.milestones = parsed.milestones;
+    saveSettingsDebounced(); updatePromptInjection(); if (syncUI) syncUI();
+    const top = parsed.milestones[parsed.milestones.length-1]?.threshold ?? msMax;
+    setStat('Готово. Событий: '+parsed.milestones.length+' (до порога '+top+').');
+    toast('success', 'События сгенерированы: '+parsed.milestones.length);
+  } catch(e) { setStat('Ошибка: '+(e.message||e)); toast('error', e.message||e); }
+  finally { btn.disabled = false; btn.innerHTML = _btnHtml; }
+}
+
+// ─── Генерация маршрутов (веток по типу отношений) ────────────────────────────
+export async function generateRoutesWithAI(charCard, chatHistory='') {
+  const c = cfg(), base = getBaseUrl(), apiKey = (c.genApiKey||'').trim(), model = (c.genModel||'').trim() || 'gpt-4o';
+  if (!base)   throw new Error('Укажи Endpoint');
+  if (!apiKey) throw new Error('Укажи API Key');
+  const lang = c.genLang || 'ru', langLabel = lang === 'ru' ? 'Russian' : 'English';
+  const userNotes = (c.genUserNotes || '').trim();
+  const types = Object.entries(RELATION_TYPES).filter(([k]) => k !== 'neutral');
+  const guideBlock = types.map(([k,v]) => '- '+k+' ('+v.label+'): '+(v.genGuide || v.desc || '')).join('\n');
+  const typeKeys = types.map(([k]) => k).join('|');
+  const systemMsg = 'You are designing relationship "routes" (development branches) for a text-based RPG Love Score system. Reply with ONLY valid JSON — no explanations, no markdown, no code blocks.';
+  const hasHistory = chatHistory.trim().length > 0;
+  const userMsg = [
+    'Design relationship development ROUTES for THIS specific character. A route is a distinct branch the relationship can take, each tied to one relationship type.',
+    'For EACH relationship type listed below, write a route tailored to this character: a short evocative NAME and a 2-3 sentence DESCRIPTION of the tone, the character\'s behavior, and the stakes on that path. Each route must read clearly DIFFERENT in vibe — follow the behavioral guide for its type precisely (e.g. obsession must feel dark and suffocating, not like cozy romance).',
+    '', 'RELATIONSHIP TYPES AND THEIR BEHAVIORAL GUIDES:', guideBlock, '',
+    'CHARACTER CARD:', charCard, '',
+    ...(hasHistory ? ['RECENT CHAT HISTORY (ground the routes in the real dynamic):', chatHistory, ''] : []),
+    'Reply with STRICTLY valid JSON matching this schema exactly:',
+    '{', '  "routes": [{"name": "...", "relationType": "<one of: '+typeKeys+'>", "description": "..."}]', '}',
+    '', 'RULES:',
+    '- Produce one route for EACH relationship type listed above (do not skip any).',
+    '- relationType MUST be exactly one of these keys: '+typeKeys+'.',
+    '- name and description written in '+langLabel+'.',
+    ...(userNotes ? ['', 'SPECIAL USER INSTRUCTIONS (priority):', userNotes] : [])
+  ].join('\n');
+  const resp = await fetch(base+'/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
+    body: JSON.stringify({ model, messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}], temperature:0.8, max_tokens:2400 })
+  });
+  if (!resp.ok) { const t = await resp.text(); throw new Error('HTTP '+resp.status+': '+t.slice(0,300)); }
+  const result = await resp.json();
+  const text = result?.choices?.[0]?.message?.content ?? '';
+  if (!text.trim()) throw new Error('ИИ вернул пустой ответ');
+  return text;
+}
+
+export function parseRoutesResponse(raw) {
+  try {
+    let cleaned = raw.replace(/^```[\w]*\n?/gm,'').replace(/```$/gm,'').trim();
+    const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
+    if (s !== -1 && e > s) cleaned = cleaned.slice(s, e+1);
+    const p = JSON.parse(cleaned);
+    const valid = Object.keys(RELATION_TYPES);
+    const routes = (p.routes || [])
+      .filter(r => r && r.name && r.description && valid.includes(r.relationType))
+      .map((r, i) => ({ id: Date.now().toString(36)+i+Math.random().toString(36).slice(2,5), name: String(r.name).trim(), relationType: r.relationType, description: String(r.description).trim() }));
+    return { routes, ok:true };
+  } catch { return { routes:[], ok:false }; }
+}
+
+export async function onGenerateRoutesClick(syncUI) {
+  const btn = document.getElementById('ls-gen-routes-btn'), status = document.getElementById('ls-gen-routes-status');
+  if (!btn) return;
+  const setStat = t => { if (status) status.textContent = t; };
+  btn.disabled = true; const _btnHtml = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерирую...';
+  setStat('Обращаюсь к API...');
+  try {
+    const src = gatherGenSource();
+    if (src.error) { setStat(src.error); return; }
+    autoSnapshot('До генерации маршрутов');
+    const _msgN = parseInt(cfg().chatAnalysisMsgCount ?? 0);
+    const _history = _msgN > 0 ? getChatHistory(_msgN) : '';
+    setStat('Генерирую ветки по типам...');
+    const raw    = await generateRoutesWithAI(src.cardText, _history);
+    const parsed = parseRoutesResponse(raw);
+    if (!parsed.ok)            { setStat('Ошибка разбора: '+raw.slice(0,120)); return; }
+    if (!parsed.routes.length) { setStat('ИИ не вернул маршруты — попробуй снова.'); return; }
+    const d = loveData();
+    d.routes = parsed.routes;
+    cfg().routesEnabled = true;
+    saveSettingsDebounced(); updatePromptInjection(); if (syncUI) syncUI();
+    setStat('Готово. Маршрутов: '+parsed.routes.length);
+    toast('success', 'Маршруты сгенерированы: '+parsed.routes.length);
+  } catch(e) { setStat('Ошибка: '+(e.message||e)); toast('error', e.message||e); }
+  finally { btn.disabled = false; btn.innerHTML = _btnHtml; }
 }
 
 // ─── Лорбук ───────────────────────────────────────────────────────────────────
@@ -561,9 +703,7 @@ export function renderGroupNpcs() {
       ? `<img class="ls-npc-av-img" src="${escHtml(npc.avatarUrl)}" alt="" onerror="this.outerHTML='<div class=\\'ls-npc-av-ph\\'><i class=\\'fa-solid fa-user\\'></i></div>'">`
       : `<div class="ls-npc-av-ph"><i class="fa-solid fa-user"></i></div>`;
     const rtBtns = Object.entries(RELATION_TYPES).map(([k,v]) => {
-      const isHostile = k === 'hostile';
-      const svg = `<svg viewBox="0 0 16 13" width="12" height="10" style="display:block;fill:currentColor;${isHostile?'transform:rotate(180deg);':''}"><path d="M8,12 C8,12 1,7.5 1,3.5 C1,1.5 2.5,0.5 4,0.5 C6,0.5 7.5,1.8 8,3 C8.5,1.8 10,0.5 12,0.5 C13.5,0.5 15,1.5 15,3.5 C15,7.5 8,12 8,12Z"/></svg>`;
-      return `<span class="ls-npc-rt-btn ls-rt-${k}${npc.relationType===k?' ls-rt-active':''}" data-nid="${npc.id}" data-rt="${k}" title="${v.label}" style="color:${v.color}">${svg}</span>`;
+      return `<span class="ls-npc-rt-btn ls-rt-${k}${npc.relationType===k?' ls-rt-active':''}" data-nid="${npc.id}" data-rt="${k}" title="${v.label}" style="color:${v.color}"><i class="fa-solid ${v.icon||'fa-heart'}"></i></span>`;
     }).join('');
     const isNeg = npc.score < 0;
     const barBaseColor = isNeg ? '#4ec900' : rt.color;
@@ -610,6 +750,17 @@ export function renderGroupNpcs() {
           <span style="font-size:10px;opacity:.55;"><i class="fa-solid fa-book" style="margin-right:3px;color:#a78bfa;"></i>Описание из лорбука — не дублировать в промпт</span>
         </label>` : ''}
         <textarea class="ls-npc-field ls-npc-desc" data-nid="${npc.id}" rows="2" placeholder="Описание / характер для промпта…" ${npc.skipDescInject?'style="opacity:.3;pointer-events:none;"':''}>${escHtml(npc.description||'')}</textarea>
+        <div class="ls-npc-rival-row">
+          <label class="ls-npc-rival-toggle" title="Конкурент за внимание главного персонажа: его рост давит на твой счёт">
+            <input type="checkbox" class="ls-npc-rival" data-nid="${npc.id}" ${npc.isRival?'checked':''}>
+            <span style="font-size:11px;${npc.isRival?'color:#e0795a;':'opacity:.6;'}">⚔ Соперник за внимание</span>
+          </label>
+          <span class="ls-npc-pressure-wrap" style="${npc.isRival?'':'display:none;'}">
+            <span style="font-size:11px;opacity:.55;white-space:nowrap;">− давление</span>
+            <input type="number" class="ls-npc-pressure ls-num-input" data-nid="${npc.id}" min="0" max="5" step="0.1" style="width:50px;" value="${npc.pressure ?? 0.5}" title="Сколько вычитается из твоего счёта за каждый +1 соперника">
+            <span style="font-size:11px;opacity:.55;">за +1</span>
+          </span>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -633,6 +784,8 @@ function bindGroupNpcEvents() {
   });
   $(ct).off('change','.ls-npc-score-max').on('change','.ls-npc-score-max', function() { const n=npc(this.dataset.nid); if(n){n.maxScore=Math.max(1,parseInt(this.value)||100);save();renderGroupNpcs();} });
   $(ct).off('click','.ls-npc-rt-btn').on('click','.ls-npc-rt-btn', function() { const n=npc(this.dataset.nid); if(!n) return; n.relationType=this.dataset.rt; save(); renderGroupNpcs(); });
+  $(ct).off('change','.ls-npc-rival').on('change','.ls-npc-rival', function() { const n=npc(this.dataset.nid); if(!n) return; n.isRival=this.checked; if(n.pressure==null) n.pressure=0.5; save(); renderGroupNpcs(); toast('info', this.checked?'⚔ '+(n.name||'NPC')+' — соперник за внимание':'Соперник снят'); });
+  $(ct).off('change','.ls-npc-pressure').on('change','.ls-npc-pressure', function() { const n=npc(this.dataset.nid); if(!n) return; n.pressure=Math.max(0,parseFloat(this.value)||0.5); save(); });
   $(ct).off('click','.ls-npc-inc').on('click','.ls-npc-inc', function() { const n=npc(this.dataset.nid); if(!n) return; n.score=Math.min(n.score+1,n.maxScore); save(); renderGroupNpcs(); });
   $(ct).off('click','.ls-npc-dec').on('click','.ls-npc-dec', function() { const n=npc(this.dataset.nid); if(!n) return; n.score=Math.max(n.score-1,MIN_SCORE); save(); renderGroupNpcs(); });
   $(ct).off('click','.ls-npc-del-btn').on('click','.ls-npc-del-btn', function() { const d=chatLoveData(); d.groupNpcs=(d.groupNpcs||[]).filter(n=>n.id!==this.dataset.nid); save(); renderGroupNpcs(); });
