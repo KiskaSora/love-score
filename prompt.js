@@ -135,13 +135,24 @@ export function buildPrompt() {
   if (c.scarsEnabled) tags.push('<!-- [SCAR:short wound] -->  only on serious betrayal, cruelty or broken trust');
   if (c.hardcoreMode && (d._hcBreakthroughCD || 0) <= 0) tags.push('<!-- [HC_BREAKTHROUGH:N] -->  rare, story-defining jump (N e.g. 3-5); almost never');
   tags.push(...npcTagLines);
-  p += '\n\nOUTPUT — append at the very end, only what applies:\n'+tags.join('\n');
+  const outHead = (c.quietScoring !== false)
+    ? 'OUTPUT — silent bookkeeping, NOT part of the story. Do not think about, weigh, recalculate, justify or mention the score, these tags or this block in your reasoning/thinking; just write your reply in character, then append on the very last line only what applies:'
+    : 'OUTPUT — append at the very end, only what applies:';
+  p += '\n\n'+outHead+'\n'+tags.join('\n');
 
   return p;
 }
 
+// Глубина инжекта в чате: 0 = вплотную к ответу (сильнее всего, но reasoning-модели
+// больше «надумывают» над ним); чем выше — тем дальше вверх по истории, фиксация слабее,
+// но и соблюдение тегов чуть ниже. Кап INJECT_DEPTH_MAX держит значение в разумных рамках.
+export const INJECT_DEPTH_MAX = 8;
 export function updatePromptInjection() {
-  try { setExtensionPrompt(PROMPT_KEY, cfg().isEnabled ? buildPrompt() : '', extension_prompt_types.IN_CHAT, 0); }
+  try {
+    const c = cfg();
+    const depth = Math.max(0, Math.min(INJECT_DEPTH_MAX, parseInt(c.injectDepth, 10) || 0));
+    setExtensionPrompt(PROMPT_KEY, c.isEnabled ? buildPrompt() : '', extension_prompt_types.IN_CHAT, depth);
+  }
   catch(e) { toast('error', 'Ошибка промпта: '+e.message); }
 }
 

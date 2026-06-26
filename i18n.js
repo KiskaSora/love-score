@@ -284,6 +284,8 @@ export const DICT = {
   'Hardcore выключен': 'Hardcore off',
   '📝 AI будет писать причину к счёту в лог': '📝 The AI will write the reason for the score in the log',
   'Обоснование в логе выключено': 'Reason in the log is off',
+  '🤫 Подсчёт спрятан от размышлений модели': '🤫 Scoring is hidden from the model’s reasoning',
+  'Подсчёт снова открыт для размышлений': 'Scoring is open to reasoning again',
 
   // ── Селектор типа отношений ──
   '— авто (по чату) —': '— auto (per chat) —',
@@ -309,6 +311,7 @@ export const DICT = {
   'Выбери что генерировать, подключи API и нажми кнопку.': 'Choose what to generate, connect the API and press the button.',
   'Скрытые правила (не показывать боту таблицу очков)': 'Hidden rules (don’t show the bot the score table)',
   'Обоснование в логе (AI пишет причину к счёту)': 'Reason in the log (AI writes the cause of each change)',
+  'Тихий подсчёт (не засорять размышления модели)': 'Quiet scoring (keep it out of the model’s reasoning)',
   'При достижении порога персонаж инициирует событие.': 'When the threshold is reached, the character initiates an event.',
   'Выбери один или оба — ИИ получит всю инфу вместе.': 'Pick one or both — the AI gets all the info together.',
   'Нет записей — убедись что у персонажа есть лорбук': 'No entries — make sure the character has a lorebook',
@@ -384,6 +387,8 @@ export const DICT = {
   '0 = навсегда': '0 = forever',
   'Вид и инжект': 'Display & injection',
   'Тон инжекта:': 'Injection tone:',
+  'Глубина инжекта:': 'Injection depth:',
+  '0 = вплотную к ответу': '0 = right next to the reply',
   'Сбросить все': 'Reset all',
   '× к минусам': '× to penalties',
   'Остывать на': 'Cool down by',

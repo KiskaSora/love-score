@@ -600,8 +600,14 @@ export function settingsPanelHTML() {
         <option value="monologue">Внутренний монолог</option>
       </select>
     </div>
+    <div class="ls-row" style="gap:6px;align-items:center;">
+      <span style="font-size:12px;opacity:.6;white-space:nowrap;">Глубина инжекта:</span>
+      <input type="number" id="ls-inject-depth" class="ls-num-input" min="0" max="8" step="1" style="width:64px;">
+      <span style="font-size:11px;opacity:.45;">0 = вплотную к ответу</span>
+    </div>
     <div class="ls-row"><label class="checkbox_label" for="ls-hide-rules"><input type="checkbox" id="ls-hide-rules"><span><i class="fa-solid fa-mask" style="margin-right:6px;opacity:.85;"></i>Скрытые правила (не показывать боту таблицу очков)</span></label></div>
-    <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>`;
+    <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>
+    <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>`;
 
   const rulesContent = `
     <div class="ls-section-title" style="margin-top:0;">Правила изменения</div>
@@ -1119,7 +1125,7 @@ export function renderDebug() {
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${pending.length}</span><span class="ls-debug-stat-key">Событий в очереди</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.autoSuggestEnabled?msgCtr+' / '+interval:'выкл'}</span><span class="ls-debug-stat-key">Авто-реген</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.gradualProgression?'±2':'без огр.'}</span><span class="ls-debug-stat-key">SlowBurn</span></div>
-      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
+      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''} · @${c.injectDepth??0}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="${c.hardcoreMode?'color:#ff5577;':''}">${c.hardcoreMode?('+'+(c.hardcorePositiveCap ?? 0.5)+' / ×'+(c.hardcoreNegativeMult ?? 2)):'выкл'}</span><span class="ls-debug-stat-key">Hardcore</span></div>
       ${c.hardcoreMode?`<div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcStaleCounter||0)} / ${c.hardcoreDecayInterval ?? 3}</span><span class="ls-debug-stat-key">Простой (до decay)</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcBreakthroughCD||0)>0?(d._hcBreakthroughCD+' '+tr('сообщ.')):tr('готов')}</span><span class="ls-debug-stat-key">Прорыв</span></div>`:''}
@@ -1183,7 +1189,9 @@ export function syncUI() {
   const gr = el('ls-gradual'); if (gr) gr.checked = c.gradualProgression ?? true;
   const hr = el('ls-hide-rules'); if (hr) hr.checked = c.hideRules || false;
   const sr = el('ls-score-reason'); if (sr) sr.checked = c.scoreReason !== false;
+  const qs = el('ls-quiet-scoring'); if (qs) qs.checked = c.quietScoring !== false;
   const it = el('ls-inject-tone'); if (it) it.value = c.injectTone || 'strict';
+  const idp = el('ls-inject-depth'); if (idp) idp.value = c.injectDepth ?? 0;
   const hc = el('ls-hardcore'); if (hc) hc.checked = c.hardcoreMode || false;
   const hcBody = el('ls-hardcore-body'); if (hcBody) hcBody.style.display = c.hardcoreMode ? '' : 'none';
   const hcCap = el('ls-hc-cap'); if (hcCap) hcCap.value = c.hardcorePositiveCap ?? 0.5;
@@ -1258,7 +1266,13 @@ export function bindMainEvents() {
   $('#ls-gradual').off('change').on('change', function() { cfg().gradualProgression=this.checked; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-hide-rules').off('change').on('change', function() { cfg().hideRules=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🎭 Правила скрыты от бота — только поведение и счёт':'Правила снова видны боту'); });
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
+  $('#ls-quiet-scoring').off('change').on('change', function() { cfg().quietScoring=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🤫 Подсчёт спрятан от размышлений модели':'Подсчёт снова открыт для размышлений'); });
   $('#ls-inject-tone').off('change').on('change', function() { cfg().injectTone=this.value; saveSettingsDebounced(); updatePromptInjection(); });
+  $('#ls-inject-depth').off('input change').on('input change', function() {
+    const v = Math.max(0, Math.min(8, parseInt(this.value, 10) || 0));
+    cfg().injectDepth = v; this.value = v;
+    saveSettingsDebounced(); updatePromptInjection();
+  });
   $('#ls-hardcore').off('change').on('change', function() {
     cfg().hardcoreMode=this.checked;
     const b=document.getElementById('ls-hardcore-body'); if(b) b.style.display=this.checked?'':'none';
