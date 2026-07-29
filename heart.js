@@ -227,25 +227,59 @@ export function makeDraggable(w, onActivate) {
   });
 }
 
+// Колбэк открытия панели запоминаем: виджет может понадобиться пересоздать
+// (например, если его снесло из DOM), а колбэк туда уже никто не передаст.
+let _onActivate = null;
+
+// Сохранённая позиция могла быть выставлена на другом размере окна (другое
+// устройство, поворот экрана, свёрнутое окно) — без клампа сердце оказывается
+// за краем и выглядит как «пропало». Держим его в видимой области всегда.
+function applySavedPos(w, sz) {
+  const c = cfg();
+  if (c.widgetPos?.top == null) return;
+  const st = parseFloat(c.widgetPos.top), sl = parseFloat(c.widgetPos.left);
+  const maxTop  = Math.max(8, window.innerHeight - Math.round(sz * .94) - 8);
+  const maxLeft = Math.max(8, window.innerWidth  - sz - 8);
+  w.style.top  = clamp(isNaN(st) ? 100 : st, 8, maxTop)  + 'px';
+  w.style.left = clamp(isNaN(sl) ? 18  : sl, 8, maxLeft) + 'px';
+  w.style.bottom = 'auto'; w.style.right = 'auto';
+}
+
+let _viewportBound = false;
+function bindViewportGuard() {
+  if (_viewportBound) return;
+  _viewportBound = true;
+  let t = null;
+  const onResize = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const w = document.getElementById('ls-widget'); if (!w) return;
+      applySavedPos(w, cfg().widgetSize || 64);
+    }, 150);
+  };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+}
+
 export function createWidget(onActivate) {
-  if (document.getElementById('ls-widget')) return;
+  if (typeof onActivate === 'function') _onActivate = onActivate;
+  if (document.getElementById('ls-widget') || !document.body) return;
   const d = loveData(), c = cfg();
   const w = document.createElement('div'); w.id = 'ls-widget';
+  w.style.display = c.isEnabled ? 'block' : 'none';
   _renderWidgetContent(w);
   document.body.appendChild(w);
   const sz = c.widgetSize || 64; applyWidgetSize(sz);
   updateWidgetGlow(d.relationType || 'neutral', d.score < 0);
-  if (c.widgetPos?.top != null) {
-    const st = parseFloat(c.widgetPos.top), sl = parseFloat(c.widgetPos.left);
-    w.style.top  = clamp(isNaN(st)?100:st, 8, window.innerHeight - Math.round(sz*.94) - 8) + 'px';
-    w.style.left = clamp(isNaN(sl)?18:sl,  8, window.innerWidth  - sz - 8) + 'px';
-    w.style.bottom = 'auto'; w.style.right = 'auto';
-  }
-  makeDraggable(w, onActivate);
+  applySavedPos(w, sz);
+  makeDraggable(w, _onActivate);
+  bindViewportGuard();
 }
 
 export function refreshWidget() {
-  const c = cfg(), w = document.getElementById('ls-widget'); if (!w) return;
+  const c = cfg();
+  let w = document.getElementById('ls-widget');
+  if (!w) { createWidget(); w = document.getElementById('ls-widget'); if (!w) return; }  // виджет снесло из DOM — вернуть
   w.style.display = c.isEnabled ? 'block' : 'none';
   _renderWidgetContent(w);
 }

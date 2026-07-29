@@ -1,5 +1,5 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, toast, escHtml, addToLog } from './config.js';
+import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, toast, escHtml, addToLog, reanchorSnapshots } from './config.js';
 import { _h2r }        from './heart.js';
 import { autoSnapshot } from './state.js';
 import { updatePromptInjection } from './prompt.js';
@@ -301,14 +301,17 @@ export async function onAnalyzeClick(syncUI, renderScoreLog, renderMilestones) {
         +(parsed.reasoning ? '<div class="ls-analyze-reason">'+escHtml(parsed.reasoning)+'</div>' : '')
         +'<button id="ls-analyze-apply" class="menu_button" style="margin-top:8px;width:100%"><i class="fa-solid fa-check"></i> Применить счёт '+parsed.suggestedScore+'</button>';
       document.getElementById('ls-rt-confirm-btn')?.addEventListener('click', function() {
-        loveData().relationType = this.dataset.rt || 'neutral';
+        const d = loveData();
+        d.relationType = this.dataset.rt || 'neutral';
+        reanchorSnapshots(d, { relationType: d.relationType });
         saveSettingsDebounced(); if (syncUI) syncUI();
         toast('success', 'Тип: '+(RELATION_TYPES[this.dataset.rt]?.label || ''));
       });
       document.getElementById('ls-analyze-apply')?.addEventListener('click', () => {
         const d = loveData(), prev = d.score;
         d.score = Math.max(MIN_SCORE, Math.min(parsed.suggestedScore, d.maxScore));
-        const delta = d.score - prev; if (delta !== 0) addToLog(d, delta, 'AI анализ чата');
+        const delta = d.score - prev;
+        if (delta !== 0) { addToLog(d, delta, 'AI анализ чата', true); reanchorSnapshots(d, { score: delta }); }
         saveSettingsDebounced(); updatePromptInjection(); if (syncUI) syncUI(); if (renderScoreLog) renderScoreLog();
         toast('success', 'Счёт установлен: '+d.score);
       });
@@ -687,7 +690,11 @@ export function groupNpcs() {
   const d = chatLoveData(); if (!d.groupNpcs) d.groupNpcs = []; return d.groupNpcs;
 }
 
+// Единая точка сохранения панели NPC. Всё, что сюда приходит, — ручная правка
+// (добавление, счёт, тип, удаление), поэтому текущее состояние NPC становится
+// новой базой снимков: откат свайпа больше не отменяет правки из панели.
 export function saveGroupNpcs() {
+  reanchorSnapshots(chatLoveData(), { npcsFromCurrent: true });
   saveSettingsDebounced(); updatePromptInjection();
 }
 

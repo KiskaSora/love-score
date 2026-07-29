@@ -186,11 +186,16 @@ export function ensureLDFields(d) {
 }
 
 // ─── Снимки состояния «до сообщения» (откат при свайпе/рероле, удалении, ветвлении) ─
-// Полный набор полей, которые откатываем. Снимок берётся ДО обработки сообщения,
-// поэтому его восстановление возвращает счёт и все «включившиеся» эффекты (майлстоны,
-// шрамы, тип, маршрут, стрик, импульс, NPC) к виду «как было до этого поста».
-export const SNAP_KEYS = ['score','_coldStarted','scoreLog','_hcStaleCounter','_hcBreakthroughCD',
-  '_streakCount','_momentumTurns','_momentumDir','relationType','_currentRoute','scars','milestones','groupNpcs'];
+// Снимок берётся ДО обработки сообщения, поэтому его восстановление возвращает счёт
+// и все «включившиеся» эффекты (майлстоны, шрамы, тип, маршрут, стрик, импульс, NPC)
+// к виду «как было до этого поста».
+//
+// В снимок кладётся ТОЛЬКО рантайм: скаляры + компактные слепки статусов
+// (порог→done, id→healed, id→счёт NPC). Пользовательские данные — тексты событий,
+// имена/описания/аватары NPC, сами шрамы — не копируются: иначе откат свайпа
+// отменял бы правки, сделанные человеком уже после поста.
+export const SNAP_SCALARS = ['score','_coldStarted','_hcStaleCounter','_hcBreakthroughCD',
+  '_streakCount','_momentumTurns','_momentumDir','relationType','_currentRoute'];
 
 // Глубина истории снимков на чат (на сколько сообщений можно откатиться).
 export const SNAP_CAP = 20;
@@ -213,14 +218,112 @@ export function msgFp(m) {
 
 export function takeMsgSnapshot(d, c) {
   const snap = {};
-  for (const k of SNAP_KEYS) snap[k] = structuredClone(d[k] ?? null);
+  for (const k of SNAP_SCALARS) snap[k] = structuredClone(d[k] ?? null);
+  // История счёта: записи всегда добавляются в начало, поэтому хватает её длины.
+  snap.logLen     = (d.scoreLog   || []).length;
+  snap.milestones = (d.milestones || []).map(m => ({ threshold: m.threshold, done: !!m.done }));
+  snap.scars      = (d.scars      || []).map(s => ({ id: s.id, healed: !!s.healed }));
+  snap.groupNpcs  = (d.groupNpcs  || []).map(n => ({ id: n.id, score: n.score, relationType: n.relationType }));
   snap._autoSuggestMsgCounter = c._autoSuggestMsgCounter || 0;
   return snap;
 }
 
+// Снимки старого формата (полные клоны массивов) продолжают работать — отличаем
+// их по полям, которых в компактном слепке нет.
+const _isFullMiles = a => a.some(x => x && x.description !== undefined);
+const _isFullScars = a => a.some(x => x && x.text        !== undefined);
+const _isFullNpcs  = a => a.some(x => x && x.name        !== undefined);
+
 export function restoreMsgSnapshot(d, c, snap) {
-  for (const k of SNAP_KEYS) if (k in snap) d[k] = structuredClone(snap[k]);
+  for (const k of SNAP_SCALARS) if (k in snap) d[k] = structuredClone(snap[k]);
+
+  if (Array.isArray(snap.scoreLog))            d.scoreLog = structuredClone(snap.scoreLog);   // старый формат
+  else if (typeof snap.logLen === 'number') {
+    // Записи всегда добавляются в начало, значит «до поста» — это хвост нужной
+    // длины. Всё, что появилось сверху, снимаем — кроме ручных записей: их
+    // человек сделал уже после поста, и откат их отменять не должен.
+    const log  = d.scoreLog || [];
+    const at   = Math.max(0, log.length - snap.logLen);
+    d.scoreLog = log.slice(0, at).filter(e => e && e.manual).concat(log.slice(at));
+  }
+
+  // События: возвращаем только флаг done и только тем, что снимок знал.
+  // Добавленные после поста события и их статусы остаются нетронутыми.
+  if (Array.isArray(snap.milestones)) {
+    if (_isFullMiles(snap.milestones)) d.milestones = structuredClone(snap.milestones);
+    else {
+      const was = new Map(snap.milestones.map(m => [m.threshold, !!m.done]));
+      (d.milestones || []).forEach(m => { if (was.has(m.threshold)) m.done = was.get(m.threshold); });
+    }
+  }
+
+  // Шрамы: снимаем те, что появились из тегов отката; записанные вручную живут дальше.
+  if (Array.isArray(snap.scars)) {
+    if (_isFullScars(snap.scars)) d.scars = structuredClone(snap.scars);
+    else {
+      const was = new Map(snap.scars.map(s => [s.id, !!s.healed]));
+      d.scars = (d.scars || []).filter(s => was.has(s.id) || s.manual);
+      d.scars.forEach(s => { if (was.has(s.id)) s.healed = was.get(s.id); });
+    }
+  }
+
+  // NPC: откатываем только счёт и тип у тех, кто был в снимке. Имена, описания,
+  // аватары и добавленные позже NPC не трогаем.
+  if (Array.isArray(snap.groupNpcs)) {
+    if (_isFullNpcs(snap.groupNpcs)) d.groupNpcs = structuredClone(snap.groupNpcs);
+    else {
+      const was = new Map(snap.groupNpcs.map(n => [n.id, n]));
+      (d.groupNpcs || []).forEach(n => {
+        const w = was.get(n.id);
+        if (w) { n.score = w.score; n.relationType = w.relationType; }
+      });
+    }
+  }
+
   c._autoSuggestMsgCounter = snap._autoSuggestMsgCounter || 0;
+}
+
+// Полный слепок изменяемого состояния — для КОРОТКОГО круга «отложить → вернуть»
+// в памяти (см. onSwipeGenerationStart). В отличие от снимка сообщения хранит всё
+// целиком, поэтому возврат ничего не теряет. В настройки не пишется.
+const FULL_KEYS = [...SNAP_SCALARS, 'scoreLog', 'scars', 'milestones', 'groupNpcs'];
+export function takeFullState(d) {
+  const b = {};
+  for (const k of FULL_KEYS) b[k] = structuredClone(d[k] ?? null);
+  return b;
+}
+export function restoreFullState(d, b) {
+  for (const k of FULL_KEYS) if (k in b) d[k] = structuredClone(b[k]);
+}
+
+// ─── Переякоривание снимков после ручной правки ───────────────────────────────
+// Снимок — это «состояние до поста». Когда человек правит счёт, тип, события,
+// шрамы или NPC уже ПОСЛЕ поста, база устаревает, и откат свайпа/удаления вернул
+// бы его правку назад. Патч точечно переносит правку во все снимки, чтобы они
+// остались корректной базой. Поддерживает и снимки старого формата.
+// patch: { score, clearLog, relationType, set, milestone:{threshold,done},
+//          milestonesAll, scarDrop, scarHealed:{id,healed}, npcsFromCurrent }
+export function reanchorSnapshots(d, patch = {}) {
+  for (const e of d._msgSnapshots || []) {
+    const s = e?.snap; if (!s) continue;
+    if (patch.score)    s.score = roundScore((s.score || 0) + patch.score);
+    if (patch.clearLog) { if (typeof s.logLen === 'number') s.logLen = 0; if (Array.isArray(s.scoreLog)) s.scoreLog = []; }
+    if (patch.relationType) s.relationType = patch.relationType;
+    if (patch.set) Object.assign(s, patch.set);
+    if (patch.milestone) {
+      const m = (s.milestones || []).find(x => x.threshold === patch.milestone.threshold);
+      if (m) m.done = !!patch.milestone.done;
+    }
+    if (patch.milestonesAll !== undefined) (s.milestones || []).forEach(m => { m.done = !!patch.milestonesAll; });
+    if (patch.scarDrop)   s.scars = (s.scars || []).filter(x => x.id !== patch.scarDrop);
+    if (patch.scarHealed) {
+      const sc = (s.scars || []).find(x => x.id === patch.scarHealed.id);
+      if (sc) sc.healed = !!patch.scarHealed.healed;
+    }
+    // Панель NPC — целиком ручная зона: после правки текущее состояние и есть база.
+    if (patch.npcsFromCurrent && Array.isArray(s.groupNpcs) && !_isFullNpcs(s.groupNpcs))
+      s.groupNpcs = (d.groupNpcs || []).map(n => ({ id: n.id, score: n.score, relationType: n.relationType }));
+  }
 }
 
 export function chatLoveData() {
@@ -233,6 +336,7 @@ export function chatLoveData() {
       c.chatLoveData[id] = inherited;
     } else {
       const fresh = mkLoveData();
+      fresh.maxScore = Math.max(1, parseInt(c.maxScore, 10) || fresh.maxScore);   // новый чат наследует настроенный максимум
       if (c.coldStartEnabled) {
         fresh.score = Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30));
         fresh._coldStarted = true;
@@ -278,6 +382,34 @@ function trimToBranchPoint(d, c) {
 
 export function loveData() { return chatLoveData(); }
 
+// ─── Чистка нетронутых записей ───────────────────────────────────────────────
+// Запись love-данных заводится при простом открытии чата, даже если счёт там
+// никогда не вёлся, и такие записи копятся сотнями в settings.json. Удаляем
+// только те, что дословно совпадают с дефолтом: нулевой счёт, пустые история,
+// шрамы, NPC, маршруты и снимки, нетронутые правила, шкала и события. Всё, чего
+// человек хоть раз коснулся, остаётся. Текущий чат не трогаем.
+export function pruneEmptyChatData() {
+  const c = cfg();
+  const store = c?.chatLoveData; if (!store) return 0;
+  const defMiles = JSON.stringify(mkLoveData().milestones);
+  const cur = getChatId();
+  let removed = 0;
+  for (const [id, d] of Object.entries(store)) {
+    if (id === cur || !d) continue;
+    const pristine =
+      (d.score ?? 0) === 0 &&
+      !(d.scoreLog      || []).length && !(d.scars || []).length &&
+      !(d.groupNpcs     || []).length && !(d.routes || []).length && !(d.arcs || []).length &&
+      !(d._msgSnapshots || []).length &&
+      (!d.relationType || d.relationType === 'neutral') &&
+      !(d.scoreChanges         || []).some(x => (x.description || '').trim()) &&
+      !(d.scaleInterpretations || []).some(x => (x.description || '').trim()) &&
+      JSON.stringify(d.milestones || []) === defMiles;
+    if (pristine) { delete store[id]; removed++; }
+  }
+  return removed;
+}
+
 // ─── Утилиты ──────────────────────────────────────────────────────────────────
 export function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -304,13 +436,16 @@ export function getPendingMilestones() {
   return (d.milestones || []).filter(m => !m.done && d.score >= m.threshold);
 }
 
-export function addToLog(d, delta, reason) {
+// manual = запись сделана человеком из панели, а не разбором тегов поста. Такие
+// записи переживают откат свайпа/удаления (см. restoreMsgSnapshot).
+export function addToLog(d, delta, reason, manual = false) {
   if (!d.scoreLog) d.scoreLog = [];
   const sign = delta >= 0 ? '+' : '';
   d.scoreLog.unshift({
     delta, sign: sign + delta, reason: reason || '',
     score: roundScore(d.score),                                                  // счёт ПОСЛЕ изменения — для истории/экспорта
     date: new Date().toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }),
+    ...(manual ? { manual: true } : {}),
   });
   if (d.scoreLog.length > LOG_CAP) d.scoreLog.length = LOG_CAP;
 }
@@ -365,7 +500,9 @@ export function getActiveScars(d) {
   return (d.scars || []).filter(s => !s.healed);
 }
 
-export function addScar(d, text, delta) {
+// manual = шрам записан человеком из панели, а не тегом поста. Пересчёт из чата
+// такие шрамы не воспроизводит, поэтому он их сохраняет (см. recomputeFromChat).
+export function addScar(d, text, delta, manual = false) {
   if (!d.scars) d.scars = [];
   d.scars.unshift({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
@@ -374,6 +511,7 @@ export function addScar(d, text, delta) {
     delta: roundScore(delta || 0),
     date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
     healed: false,
+    manual: !!manual,
   });
   if (d.scars.length > 30) d.scars.length = 30;
   return d.scars[0];

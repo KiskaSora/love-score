@@ -1,5 +1,5 @@
 import { saveSettingsDebounced, setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
-import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, msgFp, getChat, SNAP_CAP } from './config.js';
+import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, SNAP_CAP } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ export function buildPrompt() {
   const _rtKeys = Object.keys(RELATION_TYPES).join('|');
   const tags = [];
   const wantReason = c.scoreReason !== false;
-  let scoreDesc = '  every response; X = updated score '+MIN_SCORE+'..'+d.maxScore+(c.hardcoreMode ? ' (decimals ok, e.g. '+(roundScore(d.score + (c.hardcorePositiveCap ?? 0.5)))+')' : '');
+  let scoreDesc = '  every response; X = the new total score '+MIN_SCORE+'..'+d.maxScore+', or a signed change like +3 / -2'+(c.hardcoreMode ? ' (decimals ok, e.g. '+(roundScore(d.score + (c.hardcorePositiveCap ?? 0.5)))+')' : '');
   if (wantReason) scoreDesc += '; reason = a SHORT phrase (2-6 words) in the language of the conversation naming what caused the change — omit ":reason" if the score did not change';
   tags.push((wantReason ? '<!-- [LOVE_SCORE:X:reason] -->' : '<!-- [LOVE_SCORE:X] -->')+scoreDesc);
   if (d.relationType === 'neutral' || !d.relationType)
@@ -163,17 +163,23 @@ export function updatePromptInjection() {
 // ровно тот же счёт, что и живое накопление.
 function applyScoring(d, c, text, S) {
   // Счёт (необязательная причина после второго двоеточия: [LOVE_SCORE:47:признание сближает])
-  const sm = text.match(/<!--\s*\[LOVE_SCORE:(-?\d+(?:\.\d+)?)(?::([^\]]*))?\]\s*-->/i);
+  // X — абсолютный счёт ('47') ИЛИ дельта с явным плюсом ('+3' = текущий +3). Модель часто
+  // пишет именно дельту, особенно на большой глубине инжекта; поддержка '+' страхует подсчёт.
+  const sm = text.match(/<!--\s*\[LOVE_SCORE:([+-]?\d+(?:\.\d+)?)(?::([^\]]*))?\]\s*-->/i);
 
   // Breakthrough (только в hardcore, только если кулдаун истёк)
   let breakthroughAmt = 0;
   if (c.hardcoreMode) {
-    const bm = text.match(/<!--\s*\[HC_BREAKTHROUGH:(-?\d+(?:\.\d+)?)\]\s*-->/i);
+    const bm = text.match(/<!--\s*\[HC_BREAKTHROUGH:([+-]?\d+(?:\.\d+)?)\]\s*-->/i);
     if (bm && (d._hcBreakthroughCD || 0) <= 0) breakthroughAmt = parseFloat(bm[1]) || 0;
   }
 
   if (sm) {
-    let nv = parseFloat(sm[1]); const ov = d.score;
+    const ov = d.score;
+    const rawNum = sm[1];
+    // Ведущий «+» — модель прислала ДЕЛЬТУ (изменение), а не абсолютный счёт.
+    // «-N» оставляем абсолютом: отрицательный счёт валиден (MIN_SCORE), это не «минус N».
+    let nv = rawNum[0] === '+' ? ov + parseFloat(rawNum) : parseFloat(rawNum);
     const aiReason = (sm[2] || '').replace(/\s+/g, ' ').trim().slice(0, 60);  // обоснование от AI (если есть)
     const rawDelta = nv - ov;
     // Стрик активен, если серия плюсов уже набрана в предыдущих ходах
@@ -289,7 +295,7 @@ function applyScoring(d, c, text, S) {
   }
 
   // Майлстоны
-  const msm = [...text.matchAll(/<!--\s*\[MILESTONE:(\d+)\]\s*-->/gi)];
+  const msm = [...text.matchAll(/<!--\s*\[MILESTONE:(-?\d+)\]\s*-->/gi)];
   msm.forEach(mm => {
     const thr = parseInt(mm[1], 10);
     const ms  = (d.milestones || []).find(m => m.threshold === thr && !m.done);
@@ -321,12 +327,13 @@ function applyScoring(d, c, text, S) {
   if (c.groupMode && (d.groupNpcs || []).length > 0) {
     const allNpcs = d.groupNpcs;
     let npcChanged = false;
-    const npcScoreMatches = [...text.matchAll(/<!--\s*\[NPC_SCORE:([^\]:]+):(-?\d+)\]\s*-->/gi)];
+    const npcScoreMatches = [...text.matchAll(/<!--\s*\[NPC_SCORE:([^\]:]+):([+-]?\d+)\]\s*-->/gi)];
     npcScoreMatches.forEach(m => {
-      const name = m[1].trim(), newScore = parseInt(m[2], 10);
+      const name = m[1].trim(), rawNpc = m[2];
       const npc  = allNpcs.find(n => (n.nameEn||n.name).trim().toLowerCase() === name.toLowerCase() || n.name.trim().toLowerCase() === name.toLowerCase());
       if (npc) {
         const old = npc.score;
+        const newScore = rawNpc[0] === '+' ? old + parseInt(rawNpc, 10) : parseInt(rawNpc, 10);   // «+N» = дельта, иначе абсолют
         npc.score = Math.max(MIN_SCORE, Math.min(newScore, npc.maxScore));
         if (npc.score !== old) {
           const ndelta = npc.score - old;
@@ -362,23 +369,68 @@ function applyScoring(d, c, text, S) {
 // Заглушки сайд-эффектов — для «тихого» пересчёта (без тостов и перерисовки).
 const SILENT = { toast(){}, pulse(){}, flip(){}, refresh(){}, syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){} };
 
+// ─── Пересчёт состояния из тегов оставшихся постов ───────────────────────────
+// Любой тег, который вообще влияет на состояние. Нет ни одного — пересчитывать
+// не из чего, и трогать счёт нельзя (иначе ручной счёт превратится в ноль).
+const ANY_LS_TAG   = /<!--\s*\[(?:LOVE_SCORE|RELATION_TYPE|MILESTONE|SCAR|HC_BREAKTHROUGH|NPC_SCORE|NPC_TYPE):/i;
+const TYPE_LS_TAG  = /<!--\s*\[RELATION_TYPE:/i;
+
+// Правки счёта, сделанные человеком (или разовым AI-анализом чата), а не разбором
+// тегов поста. Пересчёт о них не знает, поэтому переносит их общей суммой.
+// Записи до появления флага manual опознаём по причине.
+const MANUAL_REASONS = ['вручную', 'ручные правки', 'AI анализ чата'];
+// Холодный старт в сумму не входит — он воспроизводится базовым значением счёта.
+const COLD_REASON = '❄ холодный старт';
+function manualScoreOffset(d) {
+  return roundScore((d.scoreLog || []).reduce((a, e) => {
+    const reason = (e.reason || '').trim();
+    if (reason === COLD_REASON) return a;
+    return a + ((e.manual || MANUAL_REASONS.includes(reason)) ? (e.delta || 0) : 0);
+  }, 0));
+}
+
 // Пересчитать счёт и состояние с нуля из тегов всех оставшихся постов AI.
 // Не зависит от заранее сохранённых снимков — поэтому работает и в старых чатах
 // (где постов до установки расширения снимков нет), и при удалении любого поста.
-// Корректно при условии, что счёт ведёт только AI (ручные правки счёта пересчёт
-// не сохраняет — он берёт значения из тегов [LOVE_SCORE] в самих сообщениях).
+// Всё, что пересчёт воспроизвести не может (ручные правки счёта, свои события,
+// свои шрамы, NPC без тегов, тип отношений, выставленный руками), сохраняется.
+// Возвращает false, если пересчитывать было не из чего и состояние не тронуто.
 function recomputeFromChat(d, c) {
   const chat = getChat();
-  // Сброс рантайма счёта в начальное (правила/шкалу/настройки/описания майлстоунов не трогаем).
-  d.score = c.coldStartEnabled ? roundScore(Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30))) : 0;
-  d._coldStarted = !!c.coldStartEnabled;
+  const aiMsgs = chat.filter(m => m && !m.is_user);
+
+  // В чате нет ни одного тега — счёт ведут вручную (или теги стёрли при
+  // редактировании). Обнулять нечего: сохраняем состояние, чиним только индексы.
+  if (!aiMsgs.some(m => ANY_LS_TAG.test(m.mes || ''))) { reindexSnapshots(d, chat); return false; }
+
+  // Что пересчёт восстановить не сможет — забираем до сброса.
+  const manual    = manualScoreOffset(d);
+  const keepType  = aiMsgs.some(m => TYPE_LS_TAG.test(m.mes || '')) ? null : (d.relationType || null);
+  const keepScars = (d.scars || []).filter(s => s.manual);
+  // События и NPC, которых теги в чате не касаются, сбрасывать нельзя — их статус
+  // мог проставить человек.
+  const tagMiles = new Set(), tagNpcs = new Set();
+  for (const m of aiMsgs) {
+    const t = m.mes || '';
+    for (const mm of t.matchAll(/<!--\s*\[MILESTONE:(-?\d+)\]\s*-->/gi)) tagMiles.add(parseInt(mm[1], 10));
+    for (const nm of t.matchAll(/<!--\s*\[NPC_(?:SCORE|TYPE):([^\]:]+):/gi)) tagNpcs.add(nm[1].trim().toLowerCase());
+  }
+
+  // Сброс рантайма счёта в начальное (правила/шкалу/настройки/описания событий не трогаем).
+  const coldBase = !!(c.coldStartEnabled && d._coldStarted);
+  d.score = coldBase ? roundScore(Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30))) : 0;
+  d._coldStarted = coldBase;
   d.scoreLog = [];
   d._hcStaleCounter = 0; d._hcBreakthroughCD = 0;
   d._streakCount = 0; d._momentumTurns = 0; d._momentumDir = 0;
   d.relationType = 'neutral'; d._currentRoute = null;
   d.scars = [];
-  (d.milestones || []).forEach(m => { m.done = false; });
-  if (c.groupMode) (d.groupNpcs || []).forEach(n => { n.score = 0; n.relationType = 'neutral'; });
+  (d.milestones || []).forEach(m => { if (tagMiles.has(m.threshold)) m.done = false; });
+  if (c.groupMode) (d.groupNpcs || []).forEach(n => {
+    const named = tagNpcs.has((n.nameEn || n.name || '').trim().toLowerCase())
+               || tagNpcs.has((n.name   || '').trim().toLowerCase());
+    if (named) { n.score = 0; n.relationType = 'neutral'; }
+  });
   d._msgSnapshots = [];
   for (let i = 0; i < chat.length; i++) {
     const m = chat[i];
@@ -388,6 +440,39 @@ function recomputeFromChat(d, c) {
     applyScoring(d, c, m.mes || '', SILENT);
   }
   if (d._msgSnapshots.length > SNAP_CAP) d._msgSnapshots.splice(0, d._msgSnapshots.length - SNAP_CAP);
+
+  // Вернуть то, что теги не воспроизводят.
+  if (keepType) d.relationType = keepType;
+  if (keepScars.length) d.scars = (d.scars || []).concat(keepScars.filter(k => !(d.scars || []).some(s => s.text === k.text)));
+  if (manual !== 0) {
+    const before = d.score;
+    d.score = roundScore(Math.max(MIN_SCORE, Math.min(d.score + manual, d.maxScore)));
+    const applied = roundScore(d.score - before);
+    if (applied !== 0) addToLog(d, applied, 'ручные правки', true);
+  }
+  return true;
+}
+
+// Индекс сообщения с таким отпечатком, начиная с from (порядок снимков совпадает
+// с порядком сообщений, поэтому поиск идёт только вперёд).
+function fpIndexOf(chat, key, from = 0) {
+  for (let i = Math.max(0, from); i < chat.length; i++) if (msgFp(chat[i]) === key) return i;
+  return -1;
+}
+
+// Пересадить снимки на новые индексы после сдвига сообщений; снимки постов,
+// которых в чате больше нет, выбрасываем — якорем они уже не являются.
+function reindexSnapshots(d, chat) {
+  const stack = (d._msgSnapshots || []).slice().sort((a, b) => a.idx - b.idx);
+  const out = [];
+  let from = 0;
+  for (const e of stack) {
+    const at = fpIndexOf(chat, e.key, from);
+    if (at < 0) continue;
+    out.push({ ...e, idx: at });
+    from = at + 1;
+  }
+  d._msgSnapshots = out;
 }
 
 // ─── Обработчик входящих сообщений ───────────────────────────────────────────
@@ -406,7 +491,9 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
     // Снимки храним стеком по индексам сообщений — этот же стек даёт точный откат
     // при удалении сообщений в таверне (см. onMessageDeleted).
     const idx = chat.length - 1;
-    const isReroll = (type === 'swipe' || type === 'regenerate');
+    // continue дописывает ТОТ ЖЕ пост: считать надо его итоговый текст целиком,
+    // иначе тег из первой части учитывается второй раз.
+    const isReroll = (type === 'swipe' || type === 'regenerate' || type === 'continue');
     const stack = d._msgSnapshots || (d._msgSnapshots = []);
     const existing = isReroll ? stack.find(e => e.idx === idx) : null;
     if (existing) {
@@ -447,6 +534,41 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
   } catch(e) { toast('error', 'Ошибка: '+e.message); }
 }
 
+// ─── Листание свайпов ─────────────────────────────────────────────────────────
+// Переключение на УЖЕ сгенерированный вариант не запускает генерацию, поэтому
+// MESSAGE_RECEIVED не приходит — без этого счёт оставался от прежнего варианта
+// и расходился с тем, что написано в видимом посте. Откатываем пост к снимку
+// «до него» и применяем теги того варианта, который сейчас на экране.
+export function onMessageSwiped(mesId, ui) {
+  if (!cfg().isEnabled) return;
+  try {
+    const d = chatLoveData(), c = cfg();
+    const chat = getChat();
+    const idx = Number.isInteger(mesId) ? mesId : chat.length - 1;
+    const msg = chat[idx];
+    if (!msg || msg.is_user) return;
+    const entry = (d._msgSnapshots || []).find(e => e.idx === idx);
+    if (!entry) return;                        // базы нет — счёт этого поста не наш
+
+    restoreMsgSnapshot(d, c, entry.snap);      // снять эффект варианта, который был на экране
+
+    // Новый (ещё не сгенерированный) свайп: swipe_id уже за пределами массива,
+    // а в mes лежит текст прошлого варианта — применять его нельзя. Счёт остаётся
+    // на базе, новый вариант посчитает onMessageReceived.
+    const pending = Array.isArray(msg.swipes) && (msg.swipe_id ?? 0) >= msg.swipes.length;
+    if (!pending) {
+      entry.key = msgFp(msg);
+      applyScoring(d, c, msg.mes || '', {
+        toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
+        syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){},
+      });
+    }
+    saveSettingsDebounced();
+    updatePromptInjection();
+    try { ui && ui(); } catch {}
+  } catch (e) { toast('error', 'Ошибка свайпа: ' + e.message); }
+}
+
 // ─── Старт свайпа/рерола: показать AI базовый счёт ДО генерации ────────────────
 // AI пишет в теге АБСОЛЮТНЫЙ счёт и отталкивается от числа, которое видит в инжекте.
 // Свайп (в отличие от рерола-кнопки) не шлёт MESSAGE_DELETED, поэтому без этого
@@ -463,19 +585,23 @@ export function onSwipeGenerationStart(type, dryRun) {
     if (idx < 0) return;
     const base = (d._msgSnapshots || []).find(e => e.idx === idx)?.snap;
     if (!base) return;                         // старый пост без снимка — базу не знаем, инжект не трогаем
-    const cur = takeMsgSnapshot(d, c);         // запомнить отклонённый вариант
+    const cur = takeFullState(d);              // запомнить отклонённый вариант целиком
     restoreMsgSnapshot(d, c, base);            // временно — состояние «до поста»
     updatePromptInjection();                   // инжект увидит базовый счёт
-    restoreMsgSnapshot(d, c, cur);             // вернуть как было (на случай отмены свайпа)
+    restoreFullState(d, cur);                  // вернуть как было (на случай отмены свайпа)
   } catch (e) { toast('error', 'Ошибка свайпа: ' + e.message); }
 }
 
 // ─── Откат при удалении сообщений в таверне ───────────────────────────────────
-// Таверна шлёт MESSAGE_DELETED с НОВОЙ длиной чата (а не индексом удалённого).
-// 1) Чистое усечение хвоста (удалили последний/последние посты) и есть снимок —
-//    точный откат по снимку «до поста»: сохраняет всё, включая ручные правки.
-// 2) Среднее удаление (сообщения сместились) или снимка нет (старый пост до
-//    установки расширения) — честный пересчёт счёта из тегов оставшихся постов.
+// Таверна шлёт MESSAGE_DELETED с НОВОЙ длиной чата (а не индексом удалённого) —
+// и шлёт его же при удалении одного свайпа, когда длина вообще не меняется.
+// Разбираем три случая:
+// 1) Ни один отслеживаемый пост не пропал (удалили сообщение юзера, свайп, пост
+//    ниже истории снимков) — счёт не наш, состояние не трогаем вообще.
+// 2) Чистое усечение хвоста и есть снимок — точный откат по снимку «до поста»:
+//    сохраняет всё, включая ручные правки.
+// 3) Удаление в середине (сообщения сместились) или снимка нет (старый пост до
+//    установки расширения) — пересчёт из тегов оставшихся постов.
 export function onMessageDeleted(newLen, ui) {
   if (!cfg().isEnabled) return;
   try {
@@ -486,15 +612,26 @@ export function onMessageDeleted(newLen, ui) {
     let cut = -1, shifted = false;
     for (let i = 0; i < stack.length; i++) {
       const e = stack[i];
-      if (e.idx >= newLen) { cut = i; break; }                 // снимок удалённого хвоста
-      if (msgFp(chat[e.idx]) !== e.key) { shifted = true; cut = i; break; }  // сообщение сместилось
+      if (e.idx >= newLen) {
+        // За концом чата. Это усечение хвоста только если пост действительно
+        // исчез: при удалении в середине он жив и просто съехал влево.
+        cut = i; shifted = fpIndexOf(chat, e.key) >= 0; break;
+      }
+      if (msgFp(chat[e.idx]) !== e.key) { cut = i; shifted = true; break; }  // сообщение сместилось
     }
 
-    if (cut >= 0 && !shifted) {
+    if (cut < 0) {
+      // Из постов, которые вели счёт, не пропало ничего — откатывать нечего.
+      updatePromptInjection();
+      try { ui && ui(); } catch {}
+      return;
+    }
+
+    if (!shifted) {
       restoreMsgSnapshot(d, c, stack[cut].snap);   // точный откат к состоянию «до удалённого поста»
       d._msgSnapshots = stack.slice(0, cut);
     } else {
-      recomputeFromChat(d, c);                      // снимка нет / сдвиг — пересчёт из чата
+      recomputeFromChat(d, c);                      // сдвиг индексов — пересчёт из чата
     }
 
     saveSettingsDebounced();

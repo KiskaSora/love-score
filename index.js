@@ -1,9 +1,9 @@
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
-import { EXT_NAME, defaultSettings, cfg } from './config.js';
+import { EXT_NAME, defaultSettings, cfg, pruneEmptyChatData } from './config.js';
 import { injectStyles, syncUI, bindMainEvents, renderDebug, openLoveScorePanel } from './ui.js';
 import { createWidget, refreshWidget } from './heart.js';
-import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart } from './prompt.js';
+import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart, onMessageSwiped } from './prompt.js';
 import { renderGroupNpcs, showAutoRegenStatus, autoRegenAll } from './ai.js';
 import { renderScoreLog, renderMilestones } from './ui.js';
 import { tr } from './i18n.js';
@@ -42,6 +42,12 @@ jQuery(() => {
     if (!c.genLorebookEntryIds)  c.genLorebookEntryIds = [];
     if (c.genUseCard == null)    c.genUseCard = true;
 
+    // Убрать записи чатов, где счёт никогда не вёлся — иначе они копятся в настройках
+    try {
+      const _dropped = pruneEmptyChatData();
+      if (_dropped) { console.debug('[Love Score] очищено пустых записей чатов: ' + _dropped); saveSettingsDebounced(); }
+    } catch {}
+
     injectStyles();
     createWidget(openLoveScorePanel);
     updatePromptInjection();
@@ -62,6 +68,11 @@ jQuery(() => {
     // новый вариант поверх отклонённого (рерол-кнопка покрыта MESSAGE_DELETED).
     if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, (type, _opts, dryRun) =>
       onSwipeGenerationStart(type, dryRun)
+    );
+
+    // Листание свайпов — счёт следует за тем вариантом, который сейчас на экране
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (mesId) =>
+      onMessageSwiped(mesId, () => { refreshWidget(); syncUI(); renderScoreLog(); renderMilestones(); renderGroupNpcs(); })
     );
 
     // Удаление сообщения(ий) в таверне — откатить счёт и эффекты к состоянию «до удалённого поста»

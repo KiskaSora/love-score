@@ -1,5 +1,5 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute } from './config.js';
+import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute, reanchorSnapshots } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget, applyWidgetSize, _h2r } from './heart.js';
 import { updatePromptInjection, buildPrompt }            from './prompt.js';
 import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot } from './state.js';
@@ -878,11 +878,13 @@ export function renderScars() {
       + '</div>';
   }).join('');
   $(ct).off('click','.ls-scar-heal').on('click','.ls-scar-heal', function() {
-    const sc = (loveData().scars||[]).find(x => x.id === String($(this).data('id')));
-    if (sc) { sc.healed = !sc.healed; saveSettingsDebounced(); updatePromptInjection(); renderScars(); }
+    const d2 = loveData(), sc = (d2.scars||[]).find(x => x.id === String($(this).data('id')));
+    if (sc) { sc.healed = !sc.healed; reanchorSnapshots(d2,{scarHealed:{id:sc.id,healed:sc.healed}}); saveSettingsDebounced(); updatePromptInjection(); renderScars(); }
   });
   $(ct).off('click','.ls-scar-del').on('click','.ls-scar-del', function() {
-    const d2 = loveData(); d2.scars = (d2.scars||[]).filter(x => x.id !== String($(this).data('id')));
+    const d2 = loveData(), id = String($(this).data('id'));
+    d2.scars = (d2.scars||[]).filter(x => x.id !== id);
+    reanchorSnapshots(d2,{scarDrop:id});
     saveSettingsDebounced(); updatePromptInjection(); renderScars();
   });
 }
@@ -1098,11 +1100,11 @@ function bindInterpEv() {
 }
 function bindMilestonesEv() {
   $('.ls-milestone-thr-input').off('change').on('change', function() { loveData().milestones[+$(this).data('idx')].threshold = parseInt(this.value)||0; saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); });
-  $('.ls-milestone-done-cb').off('change').on('change',   function() { loveData().milestones[+$(this).data('idx')].done = this.checked; saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); });
+  $('.ls-milestone-done-cb').off('change').on('change',   function() { const d=loveData(), m=d.milestones[+$(this).data('idx')]; m.done = this.checked; reanchorSnapshots(d,{milestone:{threshold:m.threshold,done:this.checked}}); saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); });
   $('.ls-milestone-desc').off('input').on('input',        function() { loveData().milestones[+$(this).data('idx')].description = this.value; saveSettingsDebounced(); updatePromptInjection(); });
   $('.ls-del-milestone').off('click').on('click',         function() { loveData().milestones.splice(+$(this).data('idx'),1); saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); });
   $('#ls-add-milestone').off('click').on('click', () => { const a=loveData().milestones, l=a[a.length-1]?.threshold??0; a.push({threshold:l+10,description:'',done:false}); saveSettingsDebounced(); renderMilestones(); });
-  $('#ls-milestone-reset-all').off('click').on('click', () => { loveData().milestones.forEach(m => m.done = false); saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); toast('info','Все события сброшены'); });
+  $('#ls-milestone-reset-all').off('click').on('click', () => { const d=loveData(); d.milestones.forEach(m => m.done = false); reanchorSnapshots(d,{milestonesAll:false}); saveSettingsDebounced(); updatePromptInjection(); renderMilestones(); toast('info','Все события сброшены'); });
 }
 
 // ─── Отладка ──────────────────────────────────────────────────────────────────
@@ -1252,17 +1254,26 @@ export function syncUI() {
 
 // ─── Основные события ─────────────────────────────────────────────────────────
 export function bindMainEvents() {
-  $('#ls-enabled').off('change').on('change', function() { cfg().isEnabled=this.checked; cfg()._savedEnabled=this.checked; saveSettingsDebounced(); updatePromptInjection(); refreshWidget(); });
+  $('#ls-enabled').off('change').on('change', function() {
+    cfg().isEnabled=this.checked; saveSettingsDebounced(); updatePromptInjection(); refreshWidget();
+    toast('info', this.checked?'Love Score включён':'Love Score выключен — сердце скрыто, счёт не считается');
+  });
   $('#ls-val').off('change').on('change', function() {
     const d=loveData(),prev=d.score; d.score=roundScore(Math.max(MIN_SCORE,Math.min(parseFloat(this.value)||0,d.maxScore)));
-    const delta=roundScore(d.score-prev); if(delta!==0){addToLog(d,delta,'вручную');renderScoreLog();}
+    const delta=roundScore(d.score-prev); if(delta!==0){addToLog(d,delta,'вручную',true);reanchorSnapshots(d,{score:delta});renderScoreLog();}
     saveSettingsDebounced(); updatePromptInjection(); refreshWidget(); renderInterps(); renderMilestones();
   });
   $('#ls-max').off('change').on('change', function() {
     const d=loveData(),c=cfg(); d.maxScore=Math.max(1,parseInt(this.value)||100); c.maxScore=d.maxScore;
     if(d.score>d.maxScore) d.score=d.maxScore; saveSettingsDebounced(); updatePromptInjection(); refreshWidget();
   });
-  $('#ls-reset-btn').off('click').on('click', () => { loveData().score=0; saveSettingsDebounced(); pulseWidget(); syncUI(); updatePromptInjection(); });
+  $('#ls-reset-btn').off('click').on('click', () => {
+    // Сброс — такая же ручная правка: пишем в историю и переносим в снимки,
+    // иначе первый же свайп/откат вернёт старый счёт.
+    const d=loveData(), delta=roundScore(0-d.score); d.score=0;
+    if(delta!==0){ addToLog(d,delta,'вручную',true); reanchorSnapshots(d,{score:delta}); }
+    saveSettingsDebounced(); pulseWidget(); syncUI(); updatePromptInjection();
+  });
   $('#ls-gradual').off('change').on('change', function() { cfg().gradualProgression=this.checked; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-hide-rules').off('change').on('change', function() { cfg().hideRules=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🎭 Правила скрыты от бота — только поведение и счёт':'Правила снова видны боту'); });
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
@@ -1296,7 +1307,8 @@ export function bindMainEvents() {
     const d=loveData(), c=cfg(), prev=d.score;
     const target=Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30));
     d.score=target; d._coldStarted=true;
-    const delta=roundScore(d.score-prev); if(delta!==0) addToLog(d,delta,'❄ холодный старт');
+    const delta=roundScore(d.score-prev);
+    if(delta!==0){ addToLog(d,delta,'❄ холодный старт',true); reanchorSnapshots(d,{score:delta,set:{_coldStarted:true}}); }
     const crossed=(prev>=0&&d.score<0)||(prev<0&&d.score>=0);
     saveSettingsDebounced(); updatePromptInjection(); syncUI();
     if(crossed) flipWidget(); else pulseWidget();
@@ -1313,7 +1325,7 @@ export function bindMainEvents() {
   $('#ls-scar-add-btn').off('click').on('click', () => {
     const inp=document.getElementById('ls-scar-add-input'), t=(inp?.value||'').trim();
     if(!t){ toast('warning','Опиши обиду'); return; }
-    addScar(loveData(), t, 0); if(inp) inp.value='';
+    addScar(loveData(), t, 0, true); if(inp) inp.value='';
     saveSettingsDebounced(); updatePromptInjection(); renderScars(); toast('info','🩹 Шрам записан');
   });
   $('#ls-scar-add-input').off('keydown').on('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); $('#ls-scar-add-btn').click(); } });
@@ -1327,7 +1339,7 @@ export function bindMainEvents() {
   $('#ls-momentum-threshold').off('change').on('change', function(){ cfg().momentumThreshold=Math.max(1, parseInt(this.value)||8); saveSettingsDebounced(); });
   $('#ls-momentum-turns').off('change').on('change', function(){ cfg().momentumTurns=Math.max(1, parseInt(this.value)||2); saveSettingsDebounced(); });
   $('#ls-routes-enabled').off('change').on('change', function(){ cfg().routesEnabled=this.checked; const b=document.getElementById('ls-routes-container'); if(b) b.style.display=this.checked?'':'none'; saveSettingsDebounced(); updatePromptInjection(); renderRoutes(); renderChanges(); toast('info', this.checked?'🛤 Маршруты включены':'Маршруты выключены'); });
-  $(document).off('click','#ls-log-clear').on('click','#ls-log-clear', () => { loveData().scoreLog=[]; saveSettingsDebounced(); renderScoreLog(); });
+  $(document).off('click','#ls-log-clear').on('click','#ls-log-clear', () => { const d=loveData(); d.scoreLog=[]; reanchorSnapshots(d,{clearLog:true}); saveSettingsDebounced(); renderScoreLog(); });
   $(document).off('input','#ls-size').on('input','#ls-size', function() {
     const sz=parseInt(this.value), lb=document.getElementById('ls-size-label'); if(lb) lb.textContent=sz+'px';
     applyWidgetSize(sz); cfg().widgetSize=sz; saveSettingsDebounced(); refreshWidget();
@@ -1354,6 +1366,7 @@ export function bindMainEvents() {
     document.getElementById('ls-set-rt')?.addEventListener('click', function() {
       const d=loveData(), wasHostile=d.relationType==='hostile';
       d.relationType=this.dataset.rt;
+      reanchorSnapshots(d,{relationType:this.dataset.rt});
       saveSettingsDebounced(); updatePromptInjection();
       const isHostile=this.dataset.rt==='hostile';
       if(wasHostile!==isHostile) flipWidget(); else pulseWidget();
