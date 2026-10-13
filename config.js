@@ -52,6 +52,8 @@ export const defaultSettings = {
   genEndpoint: '', genApiKey: '', genModel: '', genLang: 'ru', genUserNotes: '',
   genScope: { changes: true, positiveRanges: true, negativeRanges: true, milestones: true, suggestedMax: true },
   chatAnalysisMsgCount: 20,
+  milestoneMinMsgs: 6,          // событие не чаще раза в N ответов ИИ (0 = без гейта)
+  scaleCompact: false,          // слать боту только соседние диапазоны шкалы, а не все сразу
   presets: [],
   autoSuggestEnabled: false,
   autoSuggestInterval: 20,
@@ -98,6 +100,7 @@ export const mkLoveData = () => ({
   rival: null,                  // [legacy] одиночный соперник — мигрирует в groupNpcs
   groupNpcs: [],                // окружение: NPC, среди них могут быть соперники (isRival)
   scars: [],                    // шрамы: { id, text, atScore, delta, date, healed }
+  _lastMilestoneAiMsgIdx: -1,   // на каком по счёту ответе ИИ сработал последний майлстоун (-1 = ещё не срабатывал) — гейт темпа
   scoreChanges: [
     { delta: 1,   description: '' }, { delta: 2,   description: '' },
     { delta: -1,  description: '' }, { delta: -2,  description: '' },
@@ -155,6 +158,7 @@ export function ensureLDFields(d) {
   if (d.rival === undefined)       d.rival             = null;
   if (!d.groupNpcs)                d.groupNpcs         = [];
   if (!d.scars)                    d.scars             = [];
+  if (d._lastMilestoneAiMsgIdx === undefined) d._lastMilestoneAiMsgIdx = -1;
 
   // ── Миграция: арки (по диапазону счёта) → маршруты (по типу отношений) ──
   if (!d._routesMigrated) {
@@ -195,7 +199,7 @@ export function ensureLDFields(d) {
 // имена/описания/аватары NPC, сами шрамы — не копируются: иначе откат свайпа
 // отменял бы правки, сделанные человеком уже после поста.
 export const SNAP_SCALARS = ['score','_coldStarted','_hcStaleCounter','_hcBreakthroughCD',
-  '_streakCount','_momentumTurns','_momentumDir','relationType','_currentRoute'];
+  '_streakCount','_momentumTurns','_momentumDir','relationType','_currentRoute','_lastMilestoneAiMsgIdx'];
 
 // Глубина истории снимков на чат (на сколько сообщений можно откатиться).
 export const SNAP_CAP = 20;
@@ -207,6 +211,13 @@ export const LOG_CAP = 250;
 export function getChat() {
   try { return (typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext().chat : window.chat) || []; }
   catch { return window.chat || []; }
+}
+
+// Сколько ответов ИИ уже было в чате — грубая, но надёжная мера «сколько реально
+// прожито», не зависящая от того, как быстро скачет сам счёт. Используется гейтом
+// темпа майлстоунов (см. buildPrompt / milestoneMinMsgs).
+export function getAiMsgCount() {
+  return getChat().filter(m => m && !m.is_user).length;
 }
 
 // Лёгкий «отпечаток» сообщения — отличить прежнее сообщение от пропавшего/сместившегося.
@@ -388,6 +399,17 @@ export function loveData() { return chatLoveData(); }
 // только те, что дословно совпадают с дефолтом: нулевой счёт, пустые история,
 // шрамы, NPC, маршруты и снимки, нетронутые правила, шкала и события. Всё, чего
 // человек хоть раз коснулся, остаётся. Текущий чат не трогаем.
+function isPristineChatData(d, defMiles) {
+  return (d.score ?? 0) === 0 &&
+    !(d.scoreLog      || []).length && !(d.scars || []).length &&
+    !(d.groupNpcs     || []).length && !(d.routes || []).length && !(d.arcs || []).length &&
+    !(d._msgSnapshots || []).length &&
+    (!d.relationType || d.relationType === 'neutral') &&
+    !(d.scoreChanges         || []).some(x => (x.description || '').trim()) &&
+    !(d.scaleInterpretations || []).some(x => (x.description || '').trim()) &&
+    JSON.stringify(d.milestones || []) === defMiles;
+}
+
 export function pruneEmptyChatData() {
   const c = cfg();
   const store = c?.chatLoveData; if (!store) return 0;
@@ -396,16 +418,47 @@ export function pruneEmptyChatData() {
   let removed = 0;
   for (const [id, d] of Object.entries(store)) {
     if (id === cur || !d) continue;
-    const pristine =
-      (d.score ?? 0) === 0 &&
-      !(d.scoreLog      || []).length && !(d.scars || []).length &&
-      !(d.groupNpcs     || []).length && !(d.routes || []).length && !(d.arcs || []).length &&
-      !(d._msgSnapshots || []).length &&
-      (!d.relationType || d.relationType === 'neutral') &&
-      !(d.scoreChanges         || []).some(x => (x.description || '').trim()) &&
-      !(d.scaleInterpretations || []).some(x => (x.description || '').trim()) &&
-      JSON.stringify(d.milestones || []) === defMiles;
-    if (pristine) { delete store[id]; removed++; }
+    if (isPristineChatData(d, defMiles)) { delete store[id]; removed++; }
+  }
+  return removed;
+}
+
+// ─── Ручной обзор хранилища ────────────────────────────────────────────────
+// Список всех записей chatLoveData (кроме текущего чата) со сводкой для UI:
+// сколько там реально записано и сколько это занимает места. Сортировка —
+// от самых «тяжёлых» записей к лёгким, чтобы в первую очередь показать то,
+// что реально стоит почистить.
+export function getChatStorageEntries() {
+  const c = cfg();
+  const store = c?.chatLoveData; if (!store) return [];
+  const defMiles = JSON.stringify(mkLoveData().milestones);
+  const cur = getChatId();
+  return Object.entries(store)
+    .filter(([id, d]) => id !== cur && d)
+    .map(([id, d]) => ({
+      id,
+      score: roundScore(d.score || 0),
+      maxScore: d.maxScore || 100,
+      relationType: d.relationType || 'neutral',
+      logCount: (d.scoreLog   || []).length,
+      scarsCount: (d.scars     || []).length,
+      npcCount: (d.groupNpcs || []).length,
+      routesCount: (d.routes  || []).length,
+      pristine: isPristineChatData(d, defMiles),
+      sizeBytes: JSON.stringify(d).length,
+    }))
+    .sort((a, b) => b.sizeBytes - a.sizeBytes);
+}
+
+// Удалить конкретные записи по id (текущий чат трогать нельзя — пропускаем).
+export function deleteChatDataEntries(ids) {
+  const c = cfg();
+  const store = c?.chatLoveData; if (!store) return 0;
+  const cur = getChatId();
+  let removed = 0;
+  for (const id of (ids || [])) {
+    if (id === cur) continue;
+    if (store[id]) { delete store[id]; removed++; }
   }
   return removed;
 }

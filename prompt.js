@@ -1,5 +1,5 @@
 import { saveSettingsDebounced, setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
-import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, SNAP_CAP } from './config.js';
+import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getAiMsgCount, SNAP_CAP } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
@@ -26,6 +26,11 @@ export function buildPrompt() {
     p += '\n\n'+head+' (score '+d.score+'): '+active.description.trim()+frame;
   }
 
+  // Темп: число — не дедлайн. Не обгонять реально прожитую в чате историю —
+  // тип отношений и здравый смысл важнее голого счёта (незнакомцы не женятся
+  // просто потому что цифра позволяет).
+  p += '\n\nPacing: the score sets the FEELING, not a deadline. Base how far things go on what has actually happened in the story so far — how much time, how many real scenes — not just the number. Never skip stages the relationship realistically implies (near-strangers don\'t confess love or propose marriage) even if the score would technically allow it.';
+
   // Маршрут
   if (c.routesEnabled) {
     const route = getCurrentRoute(d);
@@ -35,14 +40,30 @@ export function buildPrompt() {
     }
   }
 
-  // Майлстоны (тег — в общем OUTPUT-блоке)
-  if (pending.length > 0) {
-    const intro = tone === 'monologue' ? 'Moments I feel pulled to bring about (now or soon):'
-                : tone === 'hints'     ? 'Moments ready to happen — move toward them naturally, now or soon:'
-                : 'EVENTS TO INITIATE (naturally, this or next response):';
+  // Майлстоны (тег — в общем OUTPUT-блоке). Отдаём модели ТОЛЬКО ближайшее ещё
+  // не пройденное событие — если счёт разом перескочил через несколько порогов
+  // (крупный AI-анализ, ручная правка, откат и т.п.), не вываливаем разом
+  // «сделай комплимент → признайся → сделай предложение» одним инжектом —
+  // именно это и торопит модель со свадьбой после первой же встречи.
+  //
+  // Гейт темпа: событие также не всплывает раньше, чем пройдёт milestoneMinMsgs
+  // ответов ИИ — и от начала чата, и с прошлого сработавшего события. Так «уже
+  // 90 очков, но знакомы без году неделя» само по себе не даст события —
+  // числу нужно ещё и реальное время в истории, а не только величина.
+  const minMsgs  = Math.max(0, parseInt(c.milestoneMinMsgs, 10) || 0);
+  const aiSoFar  = getAiMsgCount();
+  const lastAt   = (d._lastMilestoneAiMsgIdx == null || d._lastMilestoneAiMsgIdx < 0) ? null : d._lastMilestoneAiMsgIdx;
+  const paced    = minMsgs <= 0 || (aiSoFar >= minMsgs && (lastAt == null || (aiSoFar - lastAt) >= minMsgs));
+  const nextMilestone = (pending.length && paced) ? pending.reduce((a, b) => a.threshold < b.threshold ? a : b) : null;
+  if (nextMilestone) {
+    const intro = tone === 'monologue' ? 'The next moment I feel pulled toward — only once the story has actually earned it:'
+                : tone === 'hints'     ? 'The next moment ready to happen — only once the scene has genuinely built up to it:'
+                : 'NEXT EVENT TO INITIATE — only once the story has genuinely built up to it, not at the first opportunity:';
     p += '\n\n'+intro;
-    pending.forEach(m => { p += '\n- '+m.description.trim()+(hide ? '' : ' ('+m.threshold+')'); });
+    p += '\n- '+nextMilestone.description.trim()+(hide ? '' : ' ('+nextMilestone.threshold+')');
+    if (pending.length > 1) p += '\n(There are '+(pending.length-1)+' further events already unlocked past this one — leave them for later, they follow once this one plays out and more story time passes.)';
   }
+
 
   if (!hide && changes.length) {
     const route0 = getCurrentRoute(d), routeId0 = route0 ? route0.id : null;
@@ -58,7 +79,18 @@ export function buildPrompt() {
       p += '\n'+(x.delta>=0?'+':'')+x.delta+': '+x.description.trim()+cond;
     }); }
   }
-  if (!hide && interps.length) { p += '\n\nScale:'; interps.forEach(x => { p += '\n'+x.min+'..'+x.max+': '+x.description.trim()+((d.score>=x.min&&d.score<=x.max)?' <- NOW':''); }); }
+  if (!hide && interps.length) {
+    // Компактный режим: не тащим в каждый инжект ВСЕ диапазоны с их описаниями —
+    // только соседние с текущим счётом. Активный диапазон и так уже описан
+    // отдельно в BEHAVIOR выше; полный список нужен модели редко, а токены жрёт
+    // каждый раз одинаково, независимо от того, где реально находится счёт.
+    let list = interps;
+    if (c.scaleCompact) {
+      const idx = interps.findIndex(x => d.score >= x.min && d.score <= x.max);
+      list = idx < 0 ? interps : interps.slice(Math.max(0, idx - 1), idx + 2);
+    }
+    p += '\n\nScale:'; list.forEach(x => { p += '\n'+x.min+'..'+x.max+': '+x.description.trim()+((d.score>=x.min&&d.score<=x.max)?' <- NOW':''); });
+  }
 
   // Шрамы (тег — в общем OUTPUT-блоке)
   if (c.scarsEnabled) {
@@ -124,7 +156,7 @@ export function buildPrompt() {
   const _rtKeys = Object.keys(RELATION_TYPES).join('|');
   const tags = [];
   const wantReason = c.scoreReason !== false;
-  let scoreDesc = '  every response; X = the new total score '+MIN_SCORE+'..'+d.maxScore+', or a signed change like +3 / -2'+(c.hardcoreMode ? ' (decimals ok, e.g. '+(roundScore(d.score + (c.hardcorePositiveCap ?? 0.5)))+')' : '');
+  let scoreDesc = '  REQUIRED every single response, never omit it; current score is '+d.score+'; X = the new total score '+MIN_SCORE+'..'+d.maxScore+', or a signed change like +3 / -2'+(c.hardcoreMode ? ' (decimals ok, e.g. '+(roundScore(d.score + (c.hardcorePositiveCap ?? 0.5)))+')' : '');
   if (wantReason) scoreDesc += '; reason = a SHORT phrase (2-6 words) in the language of the conversation naming what caused the change — omit ":reason" if the score did not change';
   tags.push((wantReason ? '<!-- [LOVE_SCORE:X:reason] -->' : '<!-- [LOVE_SCORE:X] -->')+scoreDesc);
   if (d.relationType === 'neutral' || !d.relationType)
@@ -136,8 +168,8 @@ export function buildPrompt() {
   if (c.hardcoreMode && (d._hcBreakthroughCD || 0) <= 0) tags.push('<!-- [HC_BREAKTHROUGH:N] -->  rare, story-defining jump (N e.g. 3-5); almost never');
   tags.push(...npcTagLines);
   const outHead = (c.quietScoring !== false)
-    ? 'OUTPUT — silent bookkeeping, NOT part of the story. Do not think about, weigh, recalculate, justify or mention the score, these tags or this block in your reasoning/thinking; just write your reply in character, then append on the very last line only what applies:'
-    : 'OUTPUT — append at the very end, only what applies:';
+    ? 'OUTPUT — silent bookkeeping, NOT part of the story. Do not think about, weigh, recalculate, justify or mention the score, these tags or this block in your reasoning/thinking; just write your reply in character, then append on the very last line only what applies. The LOVE_SCORE line is mandatory every time, even with no change — repeat the same number:'
+    : 'OUTPUT — append at the very end, only what applies. The LOVE_SCORE line is mandatory every time, even with no change — repeat the same number:';
   p += '\n\n'+outHead+'\n'+tags.join('\n');
 
   return p;
@@ -161,7 +193,7 @@ export function updatePromptInjection() {
 // биение/переворот сердца, перерисовка), и при пересчёте после удаления (S —
 // заглушки). Чистая логика состояния одинакова, поэтому пересчёт из чата даёт
 // ровно тот же счёт, что и живое накопление.
-function applyScoring(d, c, text, S) {
+function applyScoring(d, c, text, S, aiIndex) {
   // Счёт (необязательная причина после второго двоеточия: [LOVE_SCORE:47:признание сближает])
   // X — абсолютный счёт ('47') ИЛИ дельта с явным плюсом ('+3' = текущий +3). Модель часто
   // пишет именно дельту, особенно на большой глубине инжекта; поддержка '+' страхует подсчёт.
@@ -299,7 +331,11 @@ function applyScoring(d, c, text, S) {
   msm.forEach(mm => {
     const thr = parseInt(mm[1], 10);
     const ms  = (d.milestones || []).find(m => m.threshold === thr && !m.done);
-    if (ms) { ms.done = true; S.toast('success', 'Событие: '+ms.description.slice(0,55)); S.renderMilestones(); }
+    if (ms) {
+      ms.done = true;
+      if (typeof aiIndex === 'number') d._lastMilestoneAiMsgIdx = aiIndex;   // засечка для гейта темпа следующего события
+      S.toast('success', 'Событие: '+ms.description.slice(0,55)); S.renderMilestones();
+    }
   });
 
   // Тип отношений
@@ -374,6 +410,7 @@ const SILENT = { toast(){}, pulse(){}, flip(){}, refresh(){}, syncUI(){}, render
 // не из чего, и трогать счёт нельзя (иначе ручной счёт превратится в ноль).
 const ANY_LS_TAG   = /<!--\s*\[(?:LOVE_SCORE|RELATION_TYPE|MILESTONE|SCAR|HC_BREAKTHROUGH|NPC_SCORE|NPC_TYPE):/i;
 const TYPE_LS_TAG  = /<!--\s*\[RELATION_TYPE:/i;
+const LOVE_SCORE_TAG = /<!--\s*\[LOVE_SCORE:/i;
 
 // Правки счёта, сделанные человеком (или разовым AI-анализом чата), а не разбором
 // тегов поста. Пересчёт о них не знает, поэтому переносит их общей суммой.
@@ -425,6 +462,7 @@ function recomputeFromChat(d, c) {
   d._streakCount = 0; d._momentumTurns = 0; d._momentumDir = 0;
   d.relationType = 'neutral'; d._currentRoute = null;
   d.scars = [];
+  d._lastMilestoneAiMsgIdx = -1;   // пересобирается по ходу реплея ниже
   (d.milestones || []).forEach(m => { if (tagMiles.has(m.threshold)) m.done = false; });
   if (c.groupMode) (d.groupNpcs || []).forEach(n => {
     const named = tagNpcs.has((n.nameEn || n.name || '').trim().toLowerCase())
@@ -432,12 +470,14 @@ function recomputeFromChat(d, c) {
     if (named) { n.score = 0; n.relationType = 'neutral'; }
   });
   d._msgSnapshots = [];
+  let aiIdx = 0;
   for (let i = 0; i < chat.length; i++) {
     const m = chat[i];
     if (!m || m.is_user) continue;
+    aiIdx++;
     // Снимок «до сообщения» — чтобы свайп/рерол и последующие удаления работали точно.
     d._msgSnapshots.push({ idx: i, key: msgFp(m), snap: takeMsgSnapshot(d, c) });
-    applyScoring(d, c, m.mes || '', SILENT);
+    applyScoring(d, c, m.mes || '', SILENT, aiIdx);
   }
   if (d._msgSnapshots.length > SNAP_CAP) d._msgSnapshots.splice(0, d._msgSnapshots.length - SNAP_CAP);
 
@@ -511,7 +551,13 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
     applyScoring(d, c, text, {
       toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
       syncUI, renderScoreLog, renderMilestones, renderGroupNpcs,
-    });
+    }, getAiMsgCount());
+
+    // Модель не вписала тег счёта вообще — раньше это молча проходило мимо,
+    // и юзер не понимал, почему очки не сдвинулись. Явно сигналим об этом.
+    if (!LOVE_SCORE_TAG.test(text)) {
+      toast('warning', 'В ответе нет тега счёта — Love Score не обновился в этом посте.');
+    }
 
     saveSettingsDebounced(); updatePromptInjection();
 
@@ -561,7 +607,10 @@ export function onMessageSwiped(mesId, ui) {
       applyScoring(d, c, msg.mes || '', {
         toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
         syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){},
-      });
+      }, getChat().slice(0, idx + 1).filter(m => m && !m.is_user).length);
+      if (!LOVE_SCORE_TAG.test(msg.mes || '')) {
+        toast('warning', 'В этом варианте свайпа нет тега счёта — Love Score не обновился.');
+      }
     }
     saveSettingsDebounced();
     updatePromptInjection();

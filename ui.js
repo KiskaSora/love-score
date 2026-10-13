@@ -1,5 +1,5 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute, reanchorSnapshots } from './config.js';
+import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute, reanchorSnapshots, getChatStorageEntries, deleteChatDataEntries, pruneEmptyChatData } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget, applyWidgetSize, _h2r } from './heart.js';
 import { updatePromptInjection, buildPrompt }            from './prompt.js';
 import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot } from './state.js';
@@ -105,6 +105,7 @@ export function injectStyles() {
 .ls-heart-icon.ls-icon-neg{color:rgba(110,110,155,.75);}
 .ls-del-btn{padding:3px 7px!important;min-width:unset!important;align-self:flex-start;opacity:.35;transition:opacity .15s;}
 .ls-del-btn:hover{opacity:.8;}
+.ls-storage-armed{color:#ff4466!important;border-color:#ff4466!important;}
 .ls-range-box{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:148px;}
 .ls-range-label{font-size:9px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--SmartThemeBodyColor,#aaa);opacity:.45;line-height:1;}
 .ls-range-inner{display:flex;align-items:center;gap:6px;}
@@ -606,6 +607,7 @@ export function settingsPanelHTML() {
       <span style="font-size:11px;opacity:.45;">0 = вплотную к ответу</span>
     </div>
     <div class="ls-row"><label class="checkbox_label" for="ls-hide-rules"><input type="checkbox" id="ls-hide-rules"><span><i class="fa-solid fa-mask" style="margin-right:6px;opacity:.85;"></i>Скрытые правила (не показывать боту таблицу очков)</span></label></div>
+    <div class="ls-row"><label class="checkbox_label" for="ls-scale-compact"><input type="checkbox" id="ls-scale-compact"><span><i class="fa-solid fa-compress" style="margin-right:6px;opacity:.85;"></i>Компактная шкала — слать боту только текущий диапазон и соседние, а не все сразу</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>`;
 
@@ -618,6 +620,12 @@ export function settingsPanelHTML() {
     <div id="ls-interp-container"></div>
     <div class="ls-section-title">Романтические события</div>
     <div class="ls-hint">При достижении порога персонаж инициирует событие.</div>
+    <div class="ls-row" style="gap:8px;align-items:center;margin:2px 0 4px;">
+      <span style="font-size:12px;opacity:.75;">Не чаще одного события раз в</span>
+      <input type="number" id="ls-milestone-min-msgs" class="ls-num-input" min="0" max="100" step="1" value="${cfg().milestoneMinMsgs ?? 6}" title="Минимум ответов ИИ между событиями (и от начала чата до первого). 0 — без ограничения." style="width:56px;">
+      <span style="font-size:12px;opacity:.75;">ответов ИИ</span>
+    </div>
+    <div class="ls-hint" style="margin-top:-2px;">Даже если счёт уже позволяет — событие не всплывёт, пока с начала чата (и с прошлого события) не наберётся столько ответов. Защита от «только познакомились, а уже свадьба».</div>
     <div class="ls-gen-events-row">
       <button id="ls-gen-events-btn" class="menu_button"><i class="fa-solid fa-wand-magic-sparkles"></i> Сгенерировать события</button>
       <span style="font-size:12px;opacity:.6;white-space:nowrap;">до</span>
@@ -755,6 +763,19 @@ export function settingsPanelHTML() {
     </div>
     <div id="ls-debug-content"></div>`;
 
+  const storageContent = `
+    <div class="ls-hint">Love Score заводит отдельную запись на каждый чат, который вообще открывали — даже если счёт там ни разу не менялся. Со временем это раздувает настройки таверны. Текущий чат в списке не показывается — его не трогаем.</div>
+    <div class="ls-row" style="gap:8px;flex-wrap:wrap;">
+      <button id="ls-storage-prune-empty" class="menu_button"><i class="fa-solid fa-broom"></i> Почистить пустые записи</button>
+      <button id="ls-storage-refresh" class="menu_button" title="Пересчитать список"><i class="fa-solid fa-rotate"></i></button>
+    </div>
+    <div id="ls-storage-summary" style="font-size:11px;opacity:.5;margin:6px 0;"></div>
+    <div class="ls-row" style="gap:8px;">
+      <label class="checkbox_label" style="margin:0;gap:5px;"><input type="checkbox" id="ls-storage-select-all"><span>Выбрать всё</span></label>
+      <button id="ls-storage-delete-selected" class="menu_button" style="margin-left:auto;white-space:nowrap;" disabled>Удалить выбранное</button>
+    </div>
+    <div id="ls-storage-list" style="margin-top:6px;"></div>`;
+
   // Внутренность панели — дашборд-шапка + горизонтальные вкладки. Переиспользуется в попапе wand-меню.
   function panelInnerHTML() {
     return `<div id="ls-panel-inner" class="ls-panel-inner">
@@ -779,6 +800,7 @@ export function settingsPanelHTML() {
         <div class="ls-nav-tab" data-tab="group"><i class="fa-solid fa-users"></i><span>Окружение</span></div>
         <div class="ls-nav-tab" data-tab="presets"><i class="fa-solid fa-floppy-disk"></i><span>Пресеты</span></div>
         <div class="ls-nav-tab" data-tab="debug"><i class="fa-solid fa-bug"></i><span>Отладка</span></div>
+        <div class="ls-nav-tab" data-tab="storage"><i class="fa-solid fa-database"></i><span>Хранилище</span></div>
       </div>
       <div class="ls-tab-pane active" data-pane="overview">${overviewContent}</div>
       <div class="ls-tab-pane" data-pane="modes">${modesContent}</div>
@@ -787,6 +809,7 @@ export function settingsPanelHTML() {
       <div class="ls-tab-pane" data-pane="group">${groupContent}</div>
       <div class="ls-tab-pane" data-pane="presets">${presetsContent}</div>
       <div class="ls-tab-pane" data-pane="debug">${debugContent}</div>
+      <div class="ls-tab-pane" data-pane="storage">${storageContent}</div>
     </div>`;
   }
   return { wrapper: `<div id="ls-settings-panel" class="extension-settings">
@@ -1127,7 +1150,7 @@ export function renderDebug() {
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${pending.length}</span><span class="ls-debug-stat-key">Событий в очереди</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.autoSuggestEnabled?msgCtr+' / '+interval:'выкл'}</span><span class="ls-debug-stat-key">Авто-реген</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.gradualProgression?'±2':'без огр.'}</span><span class="ls-debug-stat-key">SlowBurn</span></div>
-      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''} · @${c.injectDepth??0}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
+      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''}${c.scaleCompact?' · '+tr('шкала сжата'):''} · @${c.injectDepth??0}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="${c.hardcoreMode?'color:#ff5577;':''}">${c.hardcoreMode?('+'+(c.hardcorePositiveCap ?? 0.5)+' / ×'+(c.hardcoreNegativeMult ?? 2)):'выкл'}</span><span class="ls-debug-stat-key">Hardcore</span></div>
       ${c.hardcoreMode?`<div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcStaleCounter||0)} / ${c.hardcoreDecayInterval ?? 3}</span><span class="ls-debug-stat-key">Простой (до decay)</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcBreakthroughCD||0)>0?(d._hcBreakthroughCD+' '+tr('сообщ.')):tr('готов')}</span><span class="ls-debug-stat-key">Прорыв</span></div>`:''}
@@ -1182,6 +1205,68 @@ export function renderDebug() {
   });
 }
 
+// ─── Хранилище: ручной обзор и чистка записей по чатам ────────────────────────
+function fmtBytes(n) {
+  if (n < 1024) return n + ' Б';
+  return (n / 1024).toFixed(1) + ' КБ';
+}
+
+function storageRowLabel(id) {
+  // id чата — это его файл/ключ в таверне; показываем как есть, но обрезаем.
+  const s = String(id || '');
+  return s.length > 60 ? s.slice(0, 57) + '…' : s;
+}
+
+function updateStorageDeleteBtn() {
+  const n = document.querySelectorAll('#ls-storage-list .ls-storage-check:checked').length;
+  const btn = document.getElementById('ls-storage-delete-selected');
+  if (!btn) return;
+  btn.disabled = n === 0;
+  btn.textContent = n ? ('Удалить выбранное (' + n + ')') : 'Удалить выбранное';
+  btn.dataset.armed = '';
+}
+
+export function renderStorage() {
+  const ct = document.getElementById('ls-storage-list'); if (!ct) return;
+  const entries = getChatStorageEntries();
+  const summary = document.getElementById('ls-storage-summary');
+  const totalBytes = entries.reduce((s, e) => s + e.sizeBytes, 0);
+  const pristineCount = entries.filter(e => e.pristine).length;
+  if (summary) summary.textContent = entries.length
+    ? ('Всего записей: ' + entries.length + ' · занимают ~' + fmtBytes(totalBytes) + (pristineCount ? (' · из них пустых: ' + pristineCount) : ''))
+    : 'Кроме текущего чата записей нет';
+  if (!entries.length) { ct.innerHTML = '<div style="font-size:11px;opacity:.3;padding:5px;">Пусто</div>'; updateStorageDeleteBtn(); return; }
+
+  ct.innerHTML = entries.map(e => {
+    const rt = RELATION_TYPES[e.relationType] || RELATION_TYPES.neutral;
+    const bits = [];
+    if (e.logCount)    bits.push(e.logCount + ' в истории');
+    if (e.scarsCount)  bits.push(e.scarsCount + ' шрам' + (e.scarsCount===1?'':'ов'));
+    if (e.npcCount)     bits.push(e.npcCount + ' NPC');
+    if (e.routesCount)  bits.push(e.routesCount + ' маршр.');
+    const meta = e.pristine ? 'пустая, счёт не менялся' : (bits.join(' · ') || 'счёт менялся');
+    return '<div class="ls-preset-row'+(e.pristine?' ls-preset-snap':'')+'">'
+      +'<label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;">'
+      +'<input type="checkbox" class="ls-storage-check" data-id="'+escHtml(e.id)+'">'
+      +'<div class="ls-preset-info" style="min-width:0;">'
+      +'<div class="ls-preset-name" title="'+escHtml(e.id)+'">'+escHtml(storageRowLabel(e.id))+'</div>'
+      +'<div class="ls-preset-meta"><i class="fa-solid '+(rt.icon||'fa-heart')+'" style="margin-right:4px;color:'+rt.color+';"></i>'+escHtml(String(e.score))+'/'+escHtml(String(e.maxScore))+' · '+escHtml(meta)+'</div>'
+      +'</div></label>'
+      +'<div class="ls-preset-actions">'
+      +'<button class="menu_button ls-preset-btn ls-del-btn ls-storage-del" data-id="'+escHtml(e.id)+'" title="Удалить"><i class="fa-solid fa-xmark"></i></button>'
+      +'</div></div>';
+  }).join('');
+
+  $(ct).off('change', '.ls-storage-check').on('change', '.ls-storage-check', updateStorageDeleteBtn);
+  $(ct).off('click', '.ls-storage-del').on('click', '.ls-storage-del', function() {
+    const id = String($(this).data('id'));
+    const removed = deleteChatDataEntries([id]);
+    if (removed) { saveSettingsDebounced(); toast('success', 'Запись удалена'); }
+    renderStorage();
+  });
+  updateStorageDeleteBtn();
+}
+
 // ─── Синхронизация UI ─────────────────────────────────────────────────────────
 export function syncUI() {
   const c = cfg(), d = loveData(), el = id => document.getElementById(id);
@@ -1190,6 +1275,7 @@ export function syncUI() {
   const m  = el('ls-max');     if (m)  m.value = d.maxScore;
   const gr = el('ls-gradual'); if (gr) gr.checked = c.gradualProgression ?? true;
   const hr = el('ls-hide-rules'); if (hr) hr.checked = c.hideRules || false;
+  const sco = el('ls-scale-compact'); if (sco) sco.checked = c.scaleCompact || false;
   const sr = el('ls-score-reason'); if (sr) sr.checked = c.scoreReason !== false;
   const qs = el('ls-quiet-scoring'); if (qs) qs.checked = c.quietScoring !== false;
   const it = el('ls-inject-tone'); if (it) it.value = c.injectTone || 'strict';
@@ -1276,6 +1362,7 @@ export function bindMainEvents() {
   });
   $('#ls-gradual').off('change').on('change', function() { cfg().gradualProgression=this.checked; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-hide-rules').off('change').on('change', function() { cfg().hideRules=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🎭 Правила скрыты от бота — только поведение и счёт':'Правила снова видны боту'); });
+  $('#ls-scale-compact').off('change').on('change', function() { cfg().scaleCompact=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'Шкала сжата — боту шлём только соседние диапазоны':'Шкала снова целиком в инжекте'); });
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
   $('#ls-quiet-scoring').off('change').on('change', function() { cfg().quietScoring=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🤫 Подсчёт спрятан от размышлений модели':'Подсчёт снова открыт для размышлений'); });
   $('#ls-inject-tone').off('change').on('change', function() { cfg().injectTone=this.value; saveSettingsDebounced(); updatePromptInjection(); });
@@ -1420,6 +1507,7 @@ export function bindMainEvents() {
   $(document).off('click','#ls-gen-events-btn').on('click','#ls-gen-events-btn', () => onGenerateEventsClick(syncUI));
   $(document).off('click','#ls-gen-routes-btn').on('click','#ls-gen-routes-btn', () => onGenerateRoutesClick(syncUI));
   $(document).off('change','#ls-gen-msg-count').on('change','#ls-gen-msg-count', function(){cfg().chatAnalysisMsgCount=parseInt(this.value)||0;saveSettingsDebounced();});
+  $(document).off('change','#ls-milestone-min-msgs').on('change','#ls-milestone-min-msgs', function(){cfg().milestoneMinMsgs=Math.max(0,parseInt(this.value)||0);saveSettingsDebounced();updatePromptInjection();});
   $(document).off('click','#ls-analyze-btn').on('click','#ls-analyze-btn', () => onAnalyzeClick(syncUI, renderScoreLog, renderMilestones));
   $(document).off('change','#ls-gen-use-card').on('change','#ls-gen-use-card', function(){ cfg().genUseCard=this.checked; saveSettingsDebounced(); _syncSourceCards(); toast('info', this.checked?'Карточка включена':'Карточка отключена'); });
   $(document).off('click','#ls-src-lb-label').on('click','#ls-src-lb-label', function(ev){
@@ -1478,6 +1566,37 @@ export function bindMainEvents() {
     root.querySelectorAll('.ls-tab-pane').forEach(p=>p.classList.toggle('active', p.dataset.pane===tab));
     if(tab==='group' && cfg().groupMode) setTimeout(()=>renderGroupNpcs(),40);
     if(tab==='debug') setTimeout(renderDebug,60);
+    if(tab==='storage') setTimeout(renderStorage,60);
+  });
+  // Хранилище: пустые записи, выбор всех, массовое удаление (с подтверждением вторым нажатием)
+  $(document).off('click','#ls-storage-refresh').on('click','#ls-storage-refresh', renderStorage);
+  $(document).off('click','#ls-storage-prune-empty').on('click','#ls-storage-prune-empty', function(){
+    const n = pruneEmptyChatData();
+    if (n) { saveSettingsDebounced(); toast('success', 'Удалено пустых записей: ' + n); }
+    else toast('info', 'Пустых записей не найдено');
+    renderStorage();
+  });
+  $(document).off('change','#ls-storage-select-all').on('change','#ls-storage-select-all', function(){
+    document.querySelectorAll('#ls-storage-list .ls-storage-check').forEach(cb => { cb.checked = this.checked; });
+    updateStorageDeleteBtn();
+  });
+  $(document).off('click','#ls-storage-delete-selected').on('click','#ls-storage-delete-selected', function(){
+    const ids = [...document.querySelectorAll('#ls-storage-list .ls-storage-check:checked')].map(cb => cb.dataset.id);
+    if (!ids.length) return;
+    if (!this.dataset.armed) {
+      this.dataset.armed = '1';
+      const prevText = this.textContent;
+      this.textContent = 'Точно? Нажми ещё раз (' + ids.length + ')';
+      this.classList.add('ls-storage-armed');
+      setTimeout(() => { if (this.dataset.armed) { this.dataset.armed = ''; this.textContent = prevText; this.classList.remove('ls-storage-armed'); } }, 3000);
+      return;
+    }
+    this.dataset.armed = '';
+    const removed = deleteChatDataEntries(ids);
+    saveSettingsDebounced();
+    toast('success', 'Удалено записей: ' + removed);
+    document.getElementById('ls-storage-select-all') && (document.getElementById('ls-storage-select-all').checked = false);
+    renderStorage();
   });
   // Сворачивание шапки-дашборда
   $(document).off('click','#ls-dash-toggle').on('click','#ls-dash-toggle', function(){
