@@ -53,6 +53,8 @@ export const defaultSettings = {
   genScope: { changes: true, positiveRanges: true, negativeRanges: true, milestones: true, suggestedMax: true },
   chatAnalysisMsgCount: 20,
   milestoneMinMsgs: 6,          // событие не чаще раза в N ответов ИИ (0 = без гейта)
+  stripOldTags: true,           // вырезать теги из старых постов в исходящем промпте
+  keepTagMsgs: 3,               // сколько последних постов оставить с тегами (как образец)
   scaleCompact: false,          // слать боту только соседние диапазоны шкалы, а не все сразу
   presets: [],
   autoSuggestEnabled: false,
@@ -135,6 +137,68 @@ export function toast(type, msg) {
 export function getChatId() {
   try { const x = SillyTavern?.getContext?.() ?? {}; return x.chatId ?? x.chat_metadata?.chat_id ?? '__global__'; }
   catch { return '__global__'; }
+}
+
+// ─── Профили персонажей ──────────────────────────────────────────────────────
+// Ключ — файл аватара карточки (стабилен при переименовании). В группах профиля нет.
+export function getCharKey() {
+  try {
+    const x = SillyTavern?.getContext?.() ?? {};
+    if (x.groupId) return null;
+    return x.characters?.[x.characterId]?.avatar || null;
+  } catch { return null; }
+}
+export function getCharName() {
+  try { const x = SillyTavern?.getContext?.() ?? {}; return x.characters?.[x.characterId]?.name || ''; }
+  catch { return ''; }
+}
+export function getCharProfile() {
+  const k = getCharKey();
+  return k ? (cfg().characterProfiles?.[k] || null) : null;
+}
+function applyCharProfileToFresh(fresh) {
+  const prof = getCharProfile(); if (!prof) return;
+  const cl = v => JSON.parse(JSON.stringify(v || []));
+  if (prof.scoreChanges?.length)         fresh.scoreChanges         = cl(prof.scoreChanges);
+  if (prof.scaleInterpretations?.length) fresh.scaleInterpretations = cl(prof.scaleInterpretations);
+  if (prof.milestones?.length)           fresh.milestones           = cl(prof.milestones).map(m => ({ ...m, done: false }));
+  if (prof.maxScore)                     fresh.maxScore             = Math.max(1, parseInt(prof.maxScore, 10) || fresh.maxScore);
+}
+
+// ─── Нативные группы таверны ─────────────────────────────────────────────────
+export function getNativeGroup() {
+  try {
+    const x = SillyTavern?.getContext?.() ?? {};
+    if (!x.groupId) return null;
+    const g = (x.groups || []).find(g => String(g.id) === String(x.groupId)); if (!g) return null;
+    const off = new Set(g.disabled_members || []);
+    const members = (g.members || []).filter(a => !off.has(a)).map(a => {
+      const ch = (x.characters || []).find(c => c.avatar === a);
+      return ch ? { name: ch.name, avatar: a } : null;
+    }).filter(Boolean);
+    return { id: g.id, members };
+  } catch { return null; }
+}
+
+const _lc = v => String(v || '').trim().toLowerCase();
+export function npcMatches(n, name, avatar) {
+  return !!((avatar && n.avatar && n.avatar === avatar) || (name && (_lc(n.name) === _lc(name) || _lc(n.nameEn) === _lc(name))));
+}
+
+// Авто-ростер: участники нативной группы становятся NPC со своим счётом.
+// Вышедших из группы не удаляем — данные не теряем. Возвращает true, если что-то добавили.
+export function syncGroupRoster(d) {
+  const g = getNativeGroup(); if (!g) return false;
+  if (!d.groupNpcs) d.groupNpcs = [];
+  let changed = false;
+  for (const m of g.members) {
+    const ex = d.groupNpcs.find(n => npcMatches(n, m.name, m.avatar));
+    if (ex) { if (!ex.avatar) { ex.avatar = m.avatar; changed = true; } continue; }
+    d.groupNpcs.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: m.name, nameEn: m.name,
+      relationType: 'neutral', score: 0, maxScore: d.maxScore || 100, avatarUrl: '', description: '', avatar: m.avatar, auto: true });
+    changed = true;
+  }
+  return changed;
 }
 
 export function ensureLDFields(d) {
@@ -352,6 +416,7 @@ export function chatLoveData() {
         fresh.score = Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30));
         fresh._coldStarted = true;
       }
+      applyCharProfileToFresh(fresh);   // профиль персонажа (если есть) заменяет дефолтные правила
       c.chatLoveData[id] = fresh;
     }
   }

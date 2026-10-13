@@ -3,7 +3,7 @@ import { extension_settings } from '../../../extensions.js';
 import { EXT_NAME, defaultSettings, cfg, pruneEmptyChatData } from './config.js';
 import { injectStyles, syncUI, bindMainEvents, renderDebug, openLoveScorePanel } from './ui.js';
 import { createWidget, refreshWidget } from './heart.js';
-import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart, onMessageSwiped } from './prompt.js';
+import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart, onMessageSwiped, onChatCompletionPromptReady, onTextPromptReady, onGroupGenerationStart, resetGroupSpeaker, setRosterRenderHook } from './prompt.js';
 import { renderGroupNpcs, showAutoRegenStatus, autoRegenAll } from './ai.js';
 import { renderScoreLog, renderMilestones } from './ui.js';
 import { tr } from './i18n.js';
@@ -66,9 +66,16 @@ jQuery(() => {
 
     // Старт генерации свайпа — откатить инжект к базовому счёту, чтобы AI не считал
     // новый вариант поверх отклонённого (рерол-кнопка покрыта MESSAGE_DELETED).
+    // Нативная группа: запомнить, чей ответ генерируется, ДО сборки инжекта
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, onGroupGenerationStart);
+    setRosterRenderHook(renderGroupNpcs);
     if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, (type, _opts, dryRun) =>
       onSwipeGenerationStart(type, dryRun)
     );
+
+    // Старые теги — из исходящего промпта (чат не меняется)
+    if (event_types.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
+    if (event_types.GENERATE_AFTER_COMBINING_PROMPTS) eventSource.on(event_types.GENERATE_AFTER_COMBINING_PROMPTS, onTextPromptReady);
 
     // Листание свайпов — счёт следует за тем вариантом, который сейчас на экране
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (mesId) =>
@@ -81,6 +88,7 @@ jQuery(() => {
     );
 
     if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => {
+      resetGroupSpeaker();
       cfg().lastCheckedMessageId = null;
       cfg()._autoSuggestMsgCounter = 0;
       const _ar  = document.getElementById('ls-analyze-result');   if (_ar)  { _ar.style.display  = 'none'; _ar.innerHTML  = ''; }

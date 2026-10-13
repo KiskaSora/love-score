@@ -1,8 +1,8 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute, reanchorSnapshots, getChatStorageEntries, deleteChatDataEntries, pruneEmptyChatData } from './config.js';
+import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings, escHtml, getActiveInterp, toast, addToLog, roundScore, fmtScore, addScar, getActiveScars, getScoreHistory, getCurrentRoute, reanchorSnapshots, getCharKey, getCharName, getCharProfile, getChatStorageEntries, deleteChatDataEntries, pruneEmptyChatData } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget, applyWidgetSize, _h2r } from './heart.js';
 import { updatePromptInjection, buildPrompt }            from './prompt.js';
-import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot } from './state.js';
+import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot, saveCharProfile, deleteCharProfile, applyCharProfileToCurrentChat } from './state.js';
 import { renderGroupNpcs, renderGenLorebookPicker, _syncSourceCards, _updateGenLbCounter, onGenerateClick, onGenerateEventsClick, onGenerateRoutesClick, onAnalyzeClick, onRefreshModels, autoRegenAll, showAutoRegenStatus, scanChatForNpcs, renderLorebookPicker, mkNpc, saveGroupNpcs, getCurrentCharacterCard, updateCharPreview, _getValidLbIds } from './ai.js';
 import { observeTree, tr } from './i18n.js';
 
@@ -427,6 +427,7 @@ export function settingsPanelHTML() {
 
   const groupContent = `
     <div class="ls-hint">Отслеживай отношения с несколькими персонажами. Тяни записи из лорбука главного героя или создавай вручную. Данные хранятся отдельно для каждого чата.</div>
+    <div class="ls-hint">В нативной групповой беседе таверны участники добавляются в список сами, у каждого свой счёт. Модели уходит полный блок только для того, кто сейчас отвечает, остальные одной строкой. Его теги LOVE_SCORE и RELATION_TYPE записываются на него, основной счёт не трогается.</div>
     <div class="ls-row"><label class="checkbox_label" for="ls-group-enabled"><input type="checkbox" id="ls-group-enabled"${c.groupMode?' checked':''}><span>Включить режим окружения</span></label></div>
     <div id="ls-group-body" style="${c.groupMode?'':'display:none'}">
       <div class="ls-npc-add-row">
@@ -608,6 +609,10 @@ export function settingsPanelHTML() {
     </div>
     <div class="ls-row"><label class="checkbox_label" for="ls-hide-rules"><input type="checkbox" id="ls-hide-rules"><span><i class="fa-solid fa-mask" style="margin-right:6px;opacity:.85;"></i>Скрытые правила (не показывать боту таблицу очков)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-scale-compact"><input type="checkbox" id="ls-scale-compact"><span><i class="fa-solid fa-compress" style="margin-right:6px;opacity:.85;"></i>Компактная шкала — слать боту только текущий диапазон и соседние, а не все сразу</span></label></div>
+    <div class="ls-row" style="gap:8px;align-items:center;flex-wrap:wrap;"><label class="checkbox_label" for="ls-strip-tags"><input type="checkbox" id="ls-strip-tags"><span><i class="fa-solid fa-eraser" style="margin-right:6px;opacity:.85;"></i>Вырезать теги из старых постов (экономит токены; в самом чате они остаются)</span></label>
+      <span style="font-size:12px;opacity:.75;">оставлять в последних</span>
+      <input type="number" id="ls-keep-tags" class="ls-num-input" min="0" max="20" step="1" value="${cfg().keepTagMsgs ?? 3}" title="Сколько последних постов оставить с тегами как образец для модели" style="width:56px;">
+      <span style="font-size:12px;opacity:.75;">постах</span></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>`;
 
@@ -731,6 +736,14 @@ export function settingsPanelHTML() {
     </div>`;
 
   const presetsContent = `
+    <div class="ls-section-title">Профиль персонажа</div>
+    <div class="ls-hint">Правила, диапазоны, события и максимум, привязанные к карточке: каждый НОВЫЙ чат с этим персонажем начнётся с них, а не с дефолта. Уже идущие чаты не меняются.</div>
+    <div id="ls-charprofile-status" style="font-size:11px;opacity:.6;margin:2px 0 6px;"></div>
+    <div class="ls-row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      <button id="ls-charprofile-save" class="menu_button"><i class="fa-solid fa-user-gear"></i> Сохранить текущие правила как профиль</button>
+      <button id="ls-charprofile-apply" class="menu_button" title="Заменить правила этого чата профилем"><i class="fa-solid fa-download"></i> Применить к этому чату</button>
+      <button id="ls-charprofile-del" class="menu_button" title="Удалить профиль"><i class="fa-solid fa-trash"></i></button>
+    </div>
     <div class="ls-hint">Сохраняй и загружай наборы правил. Авто-снапшот делается перед каждой генерацией.</div>
     <div id="ls-load-mode-box">
       <div style="font-size:11px;opacity:.5;margin-bottom:5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;">Режим применения</div>
@@ -1001,7 +1014,18 @@ export function renderRoutes() {
   });
 }
 
+function renderCharProfileStatus() {
+  const el = document.getElementById('ls-charprofile-status'); if (!el) return;
+  const key = getCharKey(), prof = getCharProfile();
+  if (!key) el.textContent = 'Сейчас открыта группа или нет персонажа — профиль недоступен';
+  else if (prof) el.textContent = 'Профиль «' + (prof.charName || getCharName() || key) + '» есть' + (prof.updatedAt ? ' · обновлён ' + prof.updatedAt : '');
+  else el.textContent = 'Для «' + (getCharName() || key) + '» профиля пока нет — новые чаты стартуют с дефолтных правил';
+  ['ls-charprofile-save'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !key; });
+  ['ls-charprofile-apply','ls-charprofile-del'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !prof; });
+}
+
 export function renderPresets() {
+  renderCharProfileStatus();
   const ct = document.getElementById('ls-preset-list'); if (!ct) return;
   const presets = cfg().presets || [];
   if (!presets.length) { ct.innerHTML = '<div style="font-size:11px;opacity:.3;padding:5px;">Нет сохранённых пресетов</div>'; return; }
@@ -1276,6 +1300,7 @@ export function syncUI() {
   const gr = el('ls-gradual'); if (gr) gr.checked = c.gradualProgression ?? true;
   const hr = el('ls-hide-rules'); if (hr) hr.checked = c.hideRules || false;
   const sco = el('ls-scale-compact'); if (sco) sco.checked = c.scaleCompact || false;
+  const stt = el('ls-strip-tags'); if (stt) stt.checked = c.stripOldTags !== false;
   const sr = el('ls-score-reason'); if (sr) sr.checked = c.scoreReason !== false;
   const qs = el('ls-quiet-scoring'); if (qs) qs.checked = c.quietScoring !== false;
   const it = el('ls-inject-tone'); if (it) it.value = c.injectTone || 'strict';
@@ -1362,6 +1387,8 @@ export function bindMainEvents() {
   });
   $('#ls-gradual').off('change').on('change', function() { cfg().gradualProgression=this.checked; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-hide-rules').off('change').on('change', function() { cfg().hideRules=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🎭 Правила скрыты от бота — только поведение и счёт':'Правила снова видны боту'); });
+  $('#ls-strip-tags').off('change').on('change', function() { cfg().stripOldTags=this.checked; saveSettingsDebounced(); toast('info', this.checked?'Старые теги вырезаются из промпта':'Старые теги снова уходят модели'); });
+  $(document).off('change','#ls-keep-tags').on('change','#ls-keep-tags', function(){cfg().keepTagMsgs=Math.max(0,parseInt(this.value)||0);saveSettingsDebounced();});
   $('#ls-scale-compact').off('change').on('change', function() { cfg().scaleCompact=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'Шкала сжата — боту шлём только соседние диапазоны':'Шкала снова целиком в инжекте'); });
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
   $('#ls-quiet-scoring').off('change').on('change', function() { cfg().quietScoring=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🤫 Подсчёт спрятан от размышлений модели':'Подсчёт снова открыт для размышлений'); });
@@ -1533,6 +1560,9 @@ export function bindMainEvents() {
     autoRegenAll(syncUI).finally(()=>{if(btn){btn.disabled=false;btn.innerHTML='<i class="fa-solid fa-rotate"></i>';}});
   });
   // Пресеты
+  $(document).off('click','#ls-charprofile-save').on('click','#ls-charprofile-save', () => { saveCharProfile(); renderPresets(); });
+  $(document).off('click','#ls-charprofile-apply').on('click','#ls-charprofile-apply', () => { if (applyCharProfileToCurrentChat()) { syncUI(); updatePromptInjection(); } renderPresets(); });
+  $(document).off('click','#ls-charprofile-del').on('click','#ls-charprofile-del', () => { deleteCharProfile(); renderPresets(); });
   $(document).off('click','#ls-preset-save').on('click','#ls-preset-save', () => { const inp=document.getElementById('ls-preset-name-input'); savePreset(inp?.value||''); if(inp) inp.value=''; renderPresets(); });
   $(document).off('click','#ls-preset-import-file-btn').on('click','#ls-preset-import-file-btn', () => { document.getElementById('ls-preset-file-input')?.click(); });
   $(document).off('change','#ls-preset-file-input').on('change','#ls-preset-file-input', function() {

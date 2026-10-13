@@ -1,5 +1,5 @@
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cfg, toast, loveData } from './config.js';
+import { cfg, toast, loveData, getCharKey, getCharName, getCharProfile } from './config.js';
 
 // ─── Пресеты ─────────────────────────────────────────────────────────────────
 export function snapshotCurrentData(name) {
@@ -100,4 +100,37 @@ export function autoSnapshot(reason) {
   if (autoSnaps.length >= 5) c.presets.splice(c.presets.indexOf(autoSnaps[0]), 1);
   c.presets.push(snapshotCurrentData('🔄 ' + name));
   saveSettingsDebounced();
+}
+
+// ─── Профиль персонажа ───────────────────────────────────────────────────────
+// Те же правила/диапазоны/события/макс., что и в пресете, но привязаны к карточке:
+// новый чат с этим персонажем стартует с ними, а не с дефолта.
+export function saveCharProfile() {
+  const key = getCharKey();
+  if (!key) { toast('warning', 'Профиль привязывается к карточке персонажа — в группе или без персонажа его не создать'); return false; }
+  const c = cfg();
+  if (!c.characterProfiles) c.characterProfiles = {};
+  const snap = snapshotCurrentData(getCharName() || key);
+  c.characterProfiles[key] = { charName: getCharName(), updatedAt: snap.createdAt, maxScore: snap.maxScore,
+    scoreChanges: snap.scoreChanges, scaleInterpretations: snap.scaleInterpretations, milestones: snap.milestones };
+  saveSettingsDebounced();
+  toast('success', 'Профиль «' + (getCharName() || key) + '» сохранён — новые чаты начнутся с этих правил');
+  return true;
+}
+
+export function deleteCharProfile() {
+  const key = getCharKey(); const c = cfg();
+  if (!key || !c.characterProfiles?.[key]) return false;
+  delete c.characterProfiles[key];
+  saveSettingsDebounced();
+  toast('success', 'Профиль персонажа удалён');
+  return true;
+}
+
+export function applyCharProfileToCurrentChat() {
+  const prof = getCharProfile();
+  if (!prof) { toast('warning', 'У этого персонажа нет профиля'); return false; }
+  applyPresetData(prof, 'replace', { changes: true, ranges: true, milestones: true, maxScore: true });
+  toast('success', 'Профиль применён к этому чату');
+  return true;
 }

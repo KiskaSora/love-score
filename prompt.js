@@ -1,13 +1,45 @@
 import { saveSettingsDebounced, setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
-import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getAiMsgCount, SNAP_CAP } from './config.js';
+import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getAiMsgCount, getNativeGroup, npcMatches, syncGroupRoster, SNAP_CAP } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
+import { stripOldTagsFromMessages, stripOldTagsFromPrompt } from './tagstrip.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
+// ─── Нативная группа: кто сейчас говорит ──────────────────────────────────────
+// GENERATION_STARTED отдаёт force_chid — персонаж, чей ответ сейчас генерируется.
+// Не знаем говорящего (impersonate, не группа) — работаем как раньше, без урезания.
+let _speaker = null;
+export function onGroupGenerationStart(type, opts, dryRun) {
+  try {
+    const x = SillyTavern.getContext();
+    if (!x.groupId || !cfg().isEnabled || !cfg().groupMode) { _speaker = null; return; }
+    const ch = opts?.force_chid != null ? x.characters?.[opts.force_chid] : null;
+    _speaker = ch ? { name: ch.name, avatar: ch.avatar } : null;
+    updatePromptInjection();
+  } catch { _speaker = null; }
+}
+export function resetGroupSpeaker() { _speaker = null; }
+
+function getSpeakerNpc(d, c) {
+  if (!_speaker || !c.groupMode || !getNativeGroup()) return null;
+  return (d.groupNpcs || []).find(n => npcMatches(n, _speaker.name, _speaker.avatar)) || null;
+}
+// Копия данных чата, где «основной» счёт — счёт говорящего. buildPrompt только читает.
+function speakerView(real, sp) {
+  return Object.assign({}, real, {
+    score: sp.score, maxScore: sp.maxScore || real.maxScore, relationType: sp.relationType || 'neutral',
+    scars: [], milestones: [], routes: [], _currentRoute: null,
+    _momentumTurns: 0, _momentumDir: 0, _hcBreakthroughCD: 0, _coldStarted: false,
+  });
+}
+
 export function buildPrompt() {
-  const c = cfg(), d = chatLoveData(); if (!c.isEnabled) return '';
+  const c = cfg(), real = chatLoveData(); if (!c.isEnabled) return '';
+  const sp = getSpeakerNpc(real, c);
+  const d  = sp ? speakerView(real, sp) : real;
   const changes  = (d.scoreChanges         || []).filter(x => x.description.trim());
   const interps  = (d.scaleInterpretations || []).filter(x => x.description.trim());
-  const active   = getActiveInterp(), pending = getPendingMilestones();
+  const active   = sp ? ((d.scaleInterpretations || []).find(ip => d.score >= ip.min && d.score <= ip.max) ?? null) : getActiveInterp();
+  const pending  = sp ? [] : getPendingMilestones();
   const hide = !!c.hideRules;
   const tone = c.injectTone || 'strict';
 
@@ -129,9 +161,20 @@ export function buildPrompt() {
   // Группа / NPC: ростер (теги — в общем OUTPUT-блоке)
   const gc = cfg();
   const npcTagLines = [];
-  if (gc.groupMode && (chatLoveData().groupNpcs || []).length > 0) {
-    const activeNpcs = chatLoveData().groupNpcs.filter(n => n.name?.trim());
-    if (activeNpcs.length) {
+  if (gc.groupMode && (real.groupNpcs || []).length > 0) {
+    const activeNpcs = real.groupNpcs.filter(n => n.name?.trim());
+    if (activeNpcs.length && sp) {
+      // Нативная группа, говорящий известен: полный блок только у него (счёт, поведение,
+      // тип — выше), остальные одной строкой. Теги — обычные LOVE_SCORE/RELATION_TYPE,
+      // при приёме поста они уходят в запись именно этого персонажа.
+      p += '\n\n[GROUP] You are speaking as '+sp.name.trim()+'. The score, behavior and type above are THIS character\'s own bond with the player — track only yours.';
+      if (sp.description?.trim() && !sp.skipDescInject) p += '\nAbout you: '+sp.description.trim().slice(0,250);
+      const others = activeNpcs.filter(n => n !== sp);
+      if (others.length) p += '\nOthers (for awareness only): '+others.map(n => {
+        const rt = RELATION_TYPES[n.relationType||'neutral'] || RELATION_TYPES.neutral;
+        return n.name.trim()+': '+rt.label+' '+n.score+'/'+n.maxScore+(n.isRival ? ' ⚔rival' : '');
+      }).join('; ')+'.';
+    } else if (activeNpcs.length) {
       const hasRival = activeNpcs.some(n => n.isRival);
       p += '\n\n[SURROUNDING CHARACTERS] Track each one\'s score with the player independently.';
       activeNpcs.forEach(n => {
@@ -164,8 +207,8 @@ export function buildPrompt() {
   else
     tags.push('<!-- [RELATION_TYPE:key] -->  if type changes; key: '+_rtKeys);
   if (pending.length > 0) tags.push('<!-- [MILESTONE:threshold] -->  per completed event');
-  if (c.scarsEnabled) tags.push('<!-- [SCAR:short wound] -->  only on serious betrayal, cruelty or broken trust');
-  if (c.hardcoreMode && (d._hcBreakthroughCD || 0) <= 0) tags.push('<!-- [HC_BREAKTHROUGH:N] -->  rare, story-defining jump (N e.g. 3-5); almost never');
+  if (c.scarsEnabled && !sp) tags.push('<!-- [SCAR:short wound] -->  only on serious betrayal, cruelty or broken trust');
+  if (c.hardcoreMode && !sp && (d._hcBreakthroughCD || 0) <= 0) tags.push('<!-- [HC_BREAKTHROUGH:N] -->  rare, story-defining jump (N e.g. 3-5); almost never');
   tags.push(...npcTagLines);
   const outHead = (c.quietScoring !== false)
     ? 'OUTPUT — silent bookkeeping, NOT part of the story. Do not think about, weigh, recalculate, justify or mention the score, these tags or this block in your reasoning/thinking; just write your reply in character, then append on the very last line only what applies. The LOVE_SCORE line is mandatory every time, even with no change — repeat the same number:'
@@ -183,9 +226,31 @@ export function updatePromptInjection() {
   try {
     const c = cfg();
     const depth = Math.max(0, Math.min(INJECT_DEPTH_MAX, parseInt(c.injectDepth, 10) || 0));
-    setExtensionPrompt(PROMPT_KEY, c.isEnabled ? buildPrompt() : '', extension_prompt_types.IN_CHAT, depth);
+    if (c.isEnabled && c.groupMode && getNativeGroup()) {
+      if (syncGroupRoster(chatLoveData())) { saveSettingsDebounced(); try { renderGroupNpcsHook?.(); } catch {} }
+    }
+    _lastInjected = c.isEnabled ? buildPrompt() : '';
+    setExtensionPrompt(PROMPT_KEY, _lastInjected, extension_prompt_types.IN_CHAT, depth);
   }
   catch(e) { toast('error', 'Ошибка промпта: '+e.message); }
+}
+
+// ─── Вырезание старых тегов из исходящего промпта ─────────────────────────────
+// Хранится сам чат нетронутым — чистится только то, что уходит модели.
+let _lastInjected = '';
+let renderGroupNpcsHook = null;   // подставляется из index.js, чтобы панель NPC обновилась при добавлении участников
+export function setRosterRenderHook(fn) { renderGroupNpcsHook = fn; }
+export function onChatCompletionPromptReady(data) {
+  try {
+    const c = cfg(); if (!c.isEnabled || c.stripOldTags === false) return;
+    stripOldTagsFromMessages(data?.chat, c.keepTagMsgs ?? 3);
+  } catch (e) { console.warn('[Love Score] strip tags:', e); }
+}
+export function onTextPromptReady(data) {
+  try {
+    const c = cfg(); if (!c.isEnabled || c.stripOldTags === false || !data) return;
+    if (typeof data.prompt === 'string') data.prompt = stripOldTagsFromPrompt(data.prompt, c.keepTagMsgs ?? 3, _lastInjected);
+  } catch (e) { console.warn('[Love Score] strip tags:', e); }
 }
 
 // ─── Ядро подсчёта: применить теги одного поста AI к состоянию ─────────────────
@@ -193,7 +258,23 @@ export function updatePromptInjection() {
 // биение/переворот сердца, перерисовка), и при пересчёте после удаления (S —
 // заглушки). Чистая логика состояния одинакова, поэтому пересчёт из чата даёт
 // ровно тот же счёт, что и живое накопление.
-function applyScoring(d, c, text, S, aiIndex) {
+function routeTagsToNpc(text, npc) {
+  const nm = String(npc.nameEn || npc.name || '').replace(/[:\]]/g, '').trim(); if (!nm) return text;
+  return text
+    .replace(/<!--\s*\[LOVE_SCORE:([+-]?\d+(?:\.\d+)?)(?::[^\]]*)?\]\s*-->/gi, (_, v) => {
+      const n = Math.round(parseFloat(v));
+      return '<!-- [NPC_SCORE:'+nm+':'+(v[0] === '+' && n >= 0 ? '+' : '')+n+'] -->';
+    })
+    .replace(/<!--\s*\[RELATION_TYPE:(\w+)\]\s*-->/gi, (_, k) => '<!-- [NPC_TYPE:'+nm+':'+k+'] -->');
+}
+
+function applyScoring(d, c, text, S, aiIndex, msg) {
+  // Нативная группа: теги поста говорят про СВЯЗЬ ЭТОГО персонажа — переносим в его NPC-запись,
+  // основной счёт не трогаем.
+  if (c.groupMode && msg && getNativeGroup()) {
+    const author = (d.groupNpcs || []).find(n => npcMatches(n, msg.name, msg.original_avatar));
+    if (author) text = routeTagsToNpc(text, author);
+  }
   // Счёт (необязательная причина после второго двоеточия: [LOVE_SCORE:47:признание сближает])
   // X — абсолютный счёт ('47') ИЛИ дельта с явным плюсом ('+3' = текущий +3). Модель часто
   // пишет именно дельту, особенно на большой глубине инжекта; поддержка '+' страхует подсчёт.
@@ -370,7 +451,8 @@ function applyScoring(d, c, text, S, aiIndex) {
       if (npc) {
         const old = npc.score;
         const newScore = rawNpc[0] === '+' ? old + parseInt(rawNpc, 10) : parseInt(rawNpc, 10);   // «+N» = дельта, иначе абсолют
-        npc.score = Math.max(MIN_SCORE, Math.min(newScore, npc.maxScore));
+        const capped = c.gradualProgression ? Math.max(old - 2, Math.min(old + 2, newScore)) : newScore;   // как обещано в промпте: ±2 на NPC
+        npc.score = Math.max(MIN_SCORE, Math.min(capped, npc.maxScore));
         if (npc.score !== old) {
           const ndelta = npc.score - old;
           S.toast('info', (npc.name||name)+': '+(ndelta>0?'+':'')+ndelta+' → '+npc.score);
@@ -451,6 +533,8 @@ function recomputeFromChat(d, c) {
     const t = m.mes || '';
     for (const mm of t.matchAll(/<!--\s*\[MILESTONE:(-?\d+)\]\s*-->/gi)) tagMiles.add(parseInt(mm[1], 10));
     for (const nm of t.matchAll(/<!--\s*\[NPC_(?:SCORE|TYPE):([^\]:]+):/gi)) tagNpcs.add(nm[1].trim().toLowerCase());
+    // Нативная группа: LOVE_SCORE/RELATION_TYPE автора поста уходят в его NPC — его тоже надо сбросить перед реплеем.
+    if (c.groupMode && m.name && /<!--\s*\[(?:LOVE_SCORE|RELATION_TYPE):/i.test(t) && getNativeGroup()) tagNpcs.add(String(m.name).trim().toLowerCase());
   }
 
   // Сброс рантайма счёта в начальное (правила/шкалу/настройки/описания событий не трогаем).
@@ -477,7 +561,7 @@ function recomputeFromChat(d, c) {
     aiIdx++;
     // Снимок «до сообщения» — чтобы свайп/рерол и последующие удаления работали точно.
     d._msgSnapshots.push({ idx: i, key: msgFp(m), snap: takeMsgSnapshot(d, c) });
-    applyScoring(d, c, m.mes || '', SILENT, aiIdx);
+    applyScoring(d, c, m.mes || '', SILENT, aiIdx, m);
   }
   if (d._msgSnapshots.length > SNAP_CAP) d._msgSnapshots.splice(0, d._msgSnapshots.length - SNAP_CAP);
 
@@ -551,7 +635,7 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
     applyScoring(d, c, text, {
       toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
       syncUI, renderScoreLog, renderMilestones, renderGroupNpcs,
-    }, getAiMsgCount());
+    }, getAiMsgCount(), msg);
 
     // Модель не вписала тег счёта вообще — раньше это молча проходило мимо,
     // и юзер не понимал, почему очки не сдвинулись. Явно сигналим об этом.
@@ -607,7 +691,7 @@ export function onMessageSwiped(mesId, ui) {
       applyScoring(d, c, msg.mes || '', {
         toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
         syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){},
-      }, getChat().slice(0, idx + 1).filter(m => m && !m.is_user).length);
+      }, getChat().slice(0, idx + 1).filter(m => m && !m.is_user).length, msg);
       if (!LOVE_SCORE_TAG.test(msg.mes || '')) {
         toast('warning', 'В этом варианте свайпа нет тега счёта — Love Score не обновился.');
       }
