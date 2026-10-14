@@ -49,7 +49,7 @@ export const defaultSettings = {
   rivalPressure: 0.5,           // дефолтное давление соперника на счёт за каждый его +1
   widgetPos: null, widgetSize: 64, heartStyle: 'svg',
   lastCheckedMessageId: null, chatLoveData: {},
-  genEndpoint: '', genApiKey: '', genModel: '', genLang: 'ru', genUserNotes: '',
+  genProfileId: '', genLang: 'ru', genUserNotes: '',
   genScope: { changes: true, positiveRanges: true, negativeRanges: true, milestones: true, suggestedMax: true },
   chatAnalysisMsgCount: 20,
   milestoneMinMsgs: 6,          // событие не чаще раза в N ответов ИИ (0 = без гейта)

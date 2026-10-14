@@ -43,9 +43,34 @@ export function buildCharacterCardText(char) {
   return parts.join('\n\n');
 }
 
-export function getBaseUrl() {
-  return (cfg().genEndpoint || '').trim().replace(/\/+$/,'').replace(/\/chat\/completions$/,'').replace(/\/v1$/,'');
+// ─── API: только профили Connection Manager таверны ──────────────────────────
+// Расширение не хранит ни адрес, ни ключ, ни модель: всё берётся из выбранного
+// профиля подключения, а запрос идёт через бэкенд таверны.
+export function getConnectionProfiles() {
+  try {
+    const ctx = SillyTavern?.getContext?.();
+    const list = ctx?.extensionSettings?.connectionManager?.profiles;
+    return Array.isArray(list) ? list.filter(p => p && p.id && p.name) : [];
+  } catch { return []; }
 }
+export function getSelectedProfile() {
+  const id = cfg().genProfileId;
+  return id ? (getConnectionProfiles().find(p => p.id === id) || null) : null;
+}
+export function isApiConfigured() { return !!getSelectedProfile(); }
+export function apiConfigError() { return getSelectedProfile() ? '' : 'Выбери профиль подключения'; }
+
+async function callLLM({ system, user, temperature = 0.7, maxTokens = 1000 }) {
+  const err = apiConfigError(); if (err) throw new Error(err);
+  const svc = SillyTavern?.getContext?.()?.ConnectionManagerRequestService;
+  if (!svc?.sendRequest) throw new Error('Connection Manager недоступен — включи расширение Connection Manager или обнови таверну');
+  const messages = [{ role:'system', content:system }, { role:'user', content:user }];
+  const res = await svc.sendRequest(getSelectedProfile().id, messages, maxTokens, { stream:false, extractData:true, includePreset:true, includeInstruct:false }, { temperature });
+  const text = typeof res === 'string' ? res : (res?.content ?? '');
+  if (!String(text).trim()) throw new Error('ИИ вернул пустой ответ');
+  return String(text);
+}
+
 export function getScopeFromUI() {
   const el = id => document.getElementById(id);
   return {
@@ -57,32 +82,9 @@ export function getScopeFromUI() {
   };
 }
 
-// ─── Модели ───────────────────────────────────────────────────────────────────
-export async function fetchModelsForSelect() {
-  const base = getBaseUrl(), apiKey = (cfg().genApiKey || '').trim();
-  if (!base || !apiKey) { toast('warning', 'Укажи Endpoint и API Key'); return []; }
-  const resp = await fetch(base+'/v1/models', { method:'GET', headers:{ 'Authorization':'Bearer '+apiKey } });
-  if (!resp.ok) throw new Error('HTTP '+resp.status);
-  const data = await resp.json();
-  return (data.data || data.models || []).map(m => (typeof m === 'string' ? m : m.id)).filter(Boolean).sort();
-}
-
-export async function onRefreshModels() {
-  const btn = document.getElementById('ls-refresh-models'), sel = document.getElementById('ls-gen-model-select');
-  if (!btn || !sel) return; btn.classList.add('ls-loading');
-  try {
-    const models = await fetchModelsForSelect(), current = cfg().genModel;
-    sel.innerHTML = '<option value="">-- выбери модель --</option>';
-    models.forEach(id => { const opt = document.createElement('option'); opt.value = id; opt.textContent = id; if (id === current) opt.selected = true; sel.appendChild(opt); });
-    if (!models.length) toast('warning', 'Список моделей пуст'); else toast('success', 'Загружено: '+models.length);
-  } catch(e) { toast('error', 'Ошибка: '+e.message); } finally { btn.classList.remove('ls-loading'); }
-}
-
 // ─── AI генерация ─────────────────────────────────────────────────────────────
 export async function generateLoveScoreWithAI(charCard, scope, chatHistory='', opts={}) {
-  const c = cfg(), base = getBaseUrl(), apiKey = (c.genApiKey||'').trim(), model = (c.genModel||'').trim() || 'gpt-4o';
-  if (!base)   throw new Error('Укажи Endpoint');
-  if (!apiKey) throw new Error('Укажи API Key');
+  const c = cfg();
   const d = loveData(), maxScore = d.maxScore || 100;
   // Верхняя граница для генерации СОБЫТИЙ (может быть больше maxScore — события можно тянуть выше)
   const msMax = Math.max(1, parseInt(opts.milestoneMax) || maxScore);
@@ -132,16 +134,7 @@ export async function generateLoveScoreWithAI(charCard, scope, chatHistory='', o
     'Reply with STRICTLY valid JSON matching this schema exactly:', ...schemaLines, '',
     ...rulesLines
   ].filter(Boolean).join('\n');
-  const resp = await fetch(base+'/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
-    body: JSON.stringify({ model, messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}], temperature:0.7, max_tokens:2800 })
-  });
-  if (!resp.ok) { const t = await resp.text(); throw new Error('HTTP '+resp.status+': '+t.slice(0,300)); }
-  const result = await resp.json();
-  const text = result?.choices?.[0]?.message?.content ?? '';
-  if (!text.trim()) throw new Error('ИИ вернул пустой ответ');
-  return text;
+  return await callLLM({ system:systemMsg, user:userMsg, temperature:0.7, maxTokens:2800 });
 }
 
 export function parseAIResponse(raw) {
@@ -169,9 +162,7 @@ export function getChatHistory(n) {
 
 // ─── AI анализ ────────────────────────────────────────────────────────────────
 export async function analyzeWithAI(charCard, chatHistory) {
-  const c = cfg(), base = getBaseUrl(), apiKey = (c.genApiKey||'').trim(), model = (c.genModel||'').trim() || 'gpt-4o';
-  if (!base)   throw new Error('Не указан Endpoint');
-  if (!apiKey) throw new Error('Не указан API Key');
+  const c = cfg();
   const d = loveData(), lang = c.genLang === 'ru';
   const systemMsg = 'You are an expert analyst for a text-based RPG relationship tracker. Reply ONLY with valid JSON, no markdown.';
   const userMsg = [
@@ -182,16 +173,7 @@ export async function analyzeWithAI(charCard, chatHistory) {
     '{"suggestedScore":<integer>,"relationType":"<one of: romance|friendship|family|obsession|rival|platonic>","analysis":"<2-3 sentences>","reasoning":"<why this score>"}',
     'RULES: suggestedScore must be integer between '+MIN_SCORE+' and '+d.maxScore+'.',
   ].join('\n');
-  const resp = await fetch(base+'/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
-    body: JSON.stringify({ model, messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}], temperature:0.5, max_tokens:600 })
-  });
-  if (!resp.ok) { const t = await resp.text(); throw new Error('HTTP '+resp.status+': '+t.slice(0,200)); }
-  const result = await resp.json();
-  const text = result?.choices?.[0]?.message?.content ?? '';
-  if (!text.trim()) throw new Error('Пустой ответ от AI');
-  return text;
+  return await callLLM({ system:systemMsg, user:userMsg, temperature:0.5, maxTokens:600 });
 }
 
 export function parseAnalyzeResponse(raw) {
@@ -214,10 +196,9 @@ export function showAutoRegenStatus(text) {
 
 export async function autoRegenAll(syncUI) {
   const c = cfg();
-  const base = getBaseUrl(), apiKey = (c.genApiKey || '').trim();
-  if (!base || !apiKey) {
-    toast('warning', '💫 Авто-реген: укажи Endpoint и API Key в настройках AI');
-    showAutoRegenStatus('⚠️ Не настроен API — укажи Endpoint и API Key во вкладке «AI генерация»');
+  if (!isApiConfigured()) {
+    toast('warning', '💫 Авто-реген: настрой API (профиль или Endpoint + API Key) в настройках AI');
+    showAutoRegenStatus('⚠️ Не настроен API — выбери профиль или укажи Endpoint и API Key во вкладке «AI генерация»');
     return;
   }
   const allScope = { changes:true, positiveRanges:true, negativeRanges:true, milestones:true, suggestedMax:true };
@@ -411,9 +392,7 @@ export async function onGenerateEventsClick(syncUI) {
 
 // ─── Генерация маршрутов (веток по типу отношений) ────────────────────────────
 export async function generateRoutesWithAI(charCard, chatHistory='') {
-  const c = cfg(), base = getBaseUrl(), apiKey = (c.genApiKey||'').trim(), model = (c.genModel||'').trim() || 'gpt-4o';
-  if (!base)   throw new Error('Укажи Endpoint');
-  if (!apiKey) throw new Error('Укажи API Key');
+  const c = cfg();
   const lang = c.genLang || 'ru', langLabel = lang === 'ru' ? 'Russian' : 'English';
   const userNotes = (c.genUserNotes || '').trim();
   const types = Object.entries(RELATION_TYPES).filter(([k]) => k !== 'neutral');
@@ -435,16 +414,7 @@ export async function generateRoutesWithAI(charCard, chatHistory='') {
     '- name and description written in '+langLabel+'.',
     ...(userNotes ? ['', 'SPECIAL USER INSTRUCTIONS (priority):', userNotes] : [])
   ].join('\n');
-  const resp = await fetch(base+'/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
-    body: JSON.stringify({ model, messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}], temperature:0.8, max_tokens:2400 })
-  });
-  if (!resp.ok) { const t = await resp.text(); throw new Error('HTTP '+resp.status+': '+t.slice(0,300)); }
-  const result = await resp.json();
-  const text = result?.choices?.[0]?.message?.content ?? '';
-  if (!text.trim()) throw new Error('ИИ вернул пустой ответ');
-  return text;
+  return await callLLM({ system:systemMsg, user:userMsg, temperature:0.8, maxTokens:2400 });
 }
 
 export function parseRoutesResponse(raw) {

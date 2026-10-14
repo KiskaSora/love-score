@@ -35,6 +35,16 @@ const CYR = /[А-Яа-яЁё]/;
 // ─── Словарь RU → EN ─────────────────────────────────────────────────────────
 // Ключ — точная русская строка (текст узла, значение атрибута или текст тоста).
 export const DICT = {
+  // ── Профили API ──
+  'Теперь API берётся из профилей таверны. Старые Endpoint и API Key удалены из настроек — выбери профиль во вкладке AI.': 'The API now comes from tavern connection profiles. Your old Endpoint and API Key were removed from settings — pick a profile in the AI tab.',
+  'Профиль подключения': 'Connection profile',
+  '-- выбери профиль --': '-- select a profile --',
+  'Обновить список профилей': 'Refresh profile list',
+  'Берёт сохранённые подключения из Connection Manager таверны (API, ключ и модель уже настроены там). Ничего вводить не нужно. Если список пуст — создай профиль в Connection Manager.': 'Uses saved connections from the tavern Connection Manager (API, key and model are already set up there). Nothing to type in. If the list is empty, create a profile in Connection Manager.',
+  'Выбери профиль подключения': 'Select a connection profile',
+  'Профили не найдены — создай их в Connection Manager': 'No profiles found — create them in Connection Manager',
+  'Connection Manager недоступен — включи расширение Connection Manager или обнови таверну': 'Connection Manager is unavailable — enable the Connection Manager extension or update SillyTavern',
+  'ИИ вернул пустой ответ': 'The AI returned an empty response',
   // ── Типы отношений (config.js: RELATION_TYPES.label) ──
   'Нейтрально': 'Neutral',
   'Романтика': 'Romance',

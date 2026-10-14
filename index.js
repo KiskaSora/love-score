@@ -42,6 +42,17 @@ jQuery(() => {
     if (!c.genLorebookEntryIds)  c.genLorebookEntryIds = [];
     if (c.genUseCard == null)    c.genUseCard = true;
 
+    // Миграция: ручной ввод Endpoint/API Key убран — API берётся из профилей Connection Manager.
+    // Старые значения стираем, чтобы ключ не лежал в настройках открытым текстом.
+    try {
+      const _hadKey = !!(c.genApiKey || c.genEndpoint);
+      for (const k of ['genApiKey', 'genEndpoint', 'genModel', 'genSource']) if (k in c) delete c[k];
+      if (_hadKey) {
+        saveSettingsDebounced();
+        setTimeout(() => { try { toastr?.info?.(tr('Теперь API берётся из профилей таверны. Старые Endpoint и API Key удалены из настроек — выбери профиль во вкладке AI.'), 'Love Score', { timeOut: 12000 }); } catch {} }, 3000);
+      }
+    } catch {}
+
     // Убрать записи чатов, где счёт никогда не вёлся — иначе они копятся в настройках
     try {
       const _dropped = pruneEmptyChatData();

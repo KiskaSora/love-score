@@ -3,7 +3,7 @@ import { cfg, loveData, chatLoveData, MIN_SCORE, RELATION_TYPES, defaultSettings
 import { refreshWidget, pulseWidget, flipWidget, applyWidgetSize, _h2r } from './heart.js';
 import { updatePromptInjection, buildPrompt }            from './prompt.js';
 import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot, saveCharProfile, deleteCharProfile, applyCharProfileToCurrentChat } from './state.js';
-import { renderGroupNpcs, renderGenLorebookPicker, _syncSourceCards, _updateGenLbCounter, onGenerateClick, onGenerateEventsClick, onGenerateRoutesClick, onAnalyzeClick, onRefreshModels, autoRegenAll, showAutoRegenStatus, scanChatForNpcs, renderLorebookPicker, mkNpc, saveGroupNpcs, getCurrentCharacterCard, updateCharPreview, _getValidLbIds } from './ai.js';
+import { renderGroupNpcs, renderGenLorebookPicker, _syncSourceCards, _updateGenLbCounter, onGenerateClick, onGenerateEventsClick, onGenerateRoutesClick, onAnalyzeClick, getConnectionProfiles, autoRegenAll, showAutoRegenStatus, scanChatForNpcs, renderLorebookPicker, mkNpc, saveGroupNpcs, getCurrentCharacterCard, updateCharPreview, _getValidLbIds } from './ai.js';
 import { observeTree, tr } from './i18n.js';
 
 // ─── Стили ────────────────────────────────────────────────────────────────────
@@ -416,8 +416,10 @@ export function rtSelectHTML(curKey, opts = {}) {
 
 // ─── Панель настроек ──────────────────────────────────────────────────────────
 export function settingsPanelHTML() {
-  const c = cfg(), curModel = escHtml(c.genModel||''), curEndpoint = escHtml(c.genEndpoint||'');
-  const curKey = escHtml(c.genApiKey||''), lang = c.genLang||'ru', curNotes = escHtml(c.genUserNotes||'');
+  const c = cfg();
+  const _profiles = getConnectionProfiles();
+  const profOpts = '<option value="">-- выбери профиль --</option>' + _profiles.map(p => `<option value="${escHtml(p.id)}"${p.id===c.genProfileId?' selected':''}>${escHtml(p.name)}${p.model?' · '+escHtml(p.model):''}</option>`).join('');
+  const lang = c.genLang||'ru', curNotes = escHtml(c.genUserNotes||'');
   const sc  = c.genScope || defaultSettings.genScope;
   const chk = (id, val, label) => `<label class="ls-scope-item"><input type="checkbox" id="${id}"${val?' checked':''}> ${label}</label>`;
   const _curRt = loveData().relationType;
@@ -672,15 +674,12 @@ export function settingsPanelHTML() {
     </div>
     <label class="ls-api-label">Особые пожелания</label>
     <textarea id="ls-gen-notes" class="ls-api-field" rows="2" placeholder="Например: не добавляй события про брак..." style="resize:vertical;font-family:inherit;font-size:12px;line-height:1.5;">${curNotes}</textarea>
-    <label class="ls-api-label">Endpoint</label>
-    <input id="ls-gen-endpoint" class="ls-api-field" type="text" placeholder="https://api.example.com/v1" value="${curEndpoint}">
-    <label class="ls-api-label">API Key</label>
-    <input id="ls-gen-apikey" class="ls-api-field" type="password" placeholder="sk-..." value="${curKey}">
-    <label class="ls-api-label">Модель</label>
+    <label class="ls-api-label">Профиль подключения</label>
     <div class="ls-model-row">
-      <select id="ls-gen-model-select">${curModel?`<option value="${curModel}" selected>${curModel}</option>`:'<option value="">-- нажми обновить --</option>'}</select>
-      <button id="ls-refresh-models" class="menu_button ls-refresh-btn" title="Загрузить модели"><i class="fa-solid fa-sync"></i></button>
+      <select id="ls-gen-profile-select">${profOpts}</select>
+      <button id="ls-refresh-profiles" class="menu_button ls-refresh-btn" title="Обновить список профилей"><i class="fa-solid fa-sync"></i></button>
     </div>
+    <div class="ls-hint">Берёт сохранённые подключения из Connection Manager таверны (API, ключ и модель уже настроены там). Ничего вводить не нужно. Если список пуст — создай профиль в Connection Manager.</div>
     <div class="ls-section-title" style="margin-top:10px;"><i class="fa-solid fa-database" style="margin-right:6px;opacity:.7;"></i>Источник данных</div>
     <div class="ls-hint">Выбери один или оба — ИИ получит всю инфу вместе.</div>
     <div class="ls-source-grid">
@@ -1520,16 +1519,20 @@ export function bindMainEvents() {
     document.querySelectorAll('.ls-rt-select.ls-rt-open').forEach(s=>s.classList.remove('ls-rt-open'));
   });
   // AI events
-  $(document).off('input','#ls-gen-endpoint').on('input','#ls-gen-endpoint', function(){cfg().genEndpoint=this.value;saveSettingsDebounced();});
-  $(document).off('input','#ls-gen-apikey').on('input','#ls-gen-apikey', function(){cfg().genApiKey=this.value;saveSettingsDebounced();});
+  $(document).off('change','#ls-gen-profile-select').on('change','#ls-gen-profile-select', function(){cfg().genProfileId=this.value;saveSettingsDebounced();});
+  $(document).off('click','#ls-refresh-profiles').on('click','#ls-refresh-profiles', function(){
+    const sel=document.getElementById('ls-gen-profile-select'); if(!sel) return;
+    const list=getConnectionProfiles(), cur=cfg().genProfileId;
+    sel.innerHTML='<option value="">-- выбери профиль --</option>';
+    list.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name+(p.model?' · '+p.model:'');if(p.id===cur)o.selected=true;sel.appendChild(o);});
+    toast(list.length?'success':'warning', list.length?('Профилей: '+list.length):'Профили не найдены — создай их в Connection Manager');
+  });
   $(document).off('input','#ls-gen-notes').on('input','#ls-gen-notes', function(){cfg().genUserNotes=this.value;saveSettingsDebounced();});
-  $(document).off('change','#ls-gen-model-select').on('change','#ls-gen-model-select', function(){cfg().genModel=this.value;saveSettingsDebounced();});
   $(document).off('change','input[name=ls-lang]').on('change','input[name=ls-lang]', function(){cfg().genLang=this.value;saveSettingsDebounced();});
   const scMap={'#ls-scope-changes':'changes','#ls-scope-pos-ranges':'positiveRanges','#ls-scope-neg-ranges':'negativeRanges','#ls-scope-milestones':'milestones','#ls-scope-max':'suggestedMax'};
   Object.entries(scMap).forEach(([sel,key]) => {
     $(document).off('change',sel).on('change',sel, function() { if(!cfg().genScope) cfg().genScope={...defaultSettings.genScope}; cfg().genScope[key]=this.checked; saveSettingsDebounced(); });
   });
-  $(document).off('click','#ls-refresh-models').on('click','#ls-refresh-models', onRefreshModels);
   $(document).off('click','#ls-gen-btn').on('click','#ls-gen-btn', () => onGenerateClick(syncUI));
   $(document).off('click','#ls-gen-events-btn').on('click','#ls-gen-events-btn', () => onGenerateEventsClick(syncUI));
   $(document).off('click','#ls-gen-routes-btn').on('click','#ls-gen-routes-btn', () => onGenerateRoutesClick(syncUI));

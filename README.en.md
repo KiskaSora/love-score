@@ -24,7 +24,7 @@ Tracks the love score between the player and the character right inside the chat
 
 1. Open a chat with a character
 2. Click the 🪄 (**Magic Wand**) icon above the input field and pick **❤️ Love Score** — the control window opens
-3. In the **AI** tab, set the Endpoint and API Key of any OpenAI-compatible API
+3. In the **AI** tab, pick a connection profile from the tavern's Connection Manager (API, key and model are configured there; the extension stores none of them)
 4. Click **Generate** — the extension reads the character card and automatically fills in all the rules, ranges and events
 5. Start chatting — the widget updates itself after every bot reply
 
