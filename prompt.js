@@ -222,6 +222,9 @@ export function buildPrompt() {
 // больше «надумывают» над ним); чем выше — тем дальше вверх по истории, фиксация слабее,
 // но и соблюдение тегов чуть ниже. Кап INJECT_DEPTH_MAX держит значение в разумных рамках.
 export const INJECT_DEPTH_MAX = 8;
+// Роли для setExtensionPrompt (значения extension_prompt_roles в таверне: SYSTEM=0, USER=1, ASSISTANT=2).
+// Числа, а не импорт — чтобы не ломать расширение на версиях таверны без этого экспорта.
+const INJECT_ROLES = { system: 0, user: 1, assistant: 2 };
 export function updatePromptInjection() {
   try {
     const c = cfg();
@@ -230,7 +233,8 @@ export function updatePromptInjection() {
       if (syncGroupRoster(chatLoveData())) { saveSettingsDebounced(); try { renderGroupNpcsHook?.(); } catch {} }
     }
     _lastInjected = c.isEnabled ? buildPrompt() : '';
-    setExtensionPrompt(PROMPT_KEY, _lastInjected, extension_prompt_types.IN_CHAT, depth);
+    const role = INJECT_ROLES[c.injectRole] ?? INJECT_ROLES.system;
+    setExtensionPrompt(PROMPT_KEY, _lastInjected, extension_prompt_types.IN_CHAT, depth, false, role);
   }
   catch(e) { toast('error', 'Ошибка промпта: '+e.message); }
 }

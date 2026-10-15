@@ -609,6 +609,15 @@ export function settingsPanelHTML() {
       <input type="number" id="ls-inject-depth" class="ls-num-input" min="0" max="8" step="1" style="width:64px;">
       <span style="font-size:11px;opacity:.45;">0 = вплотную к ответу</span>
     </div>
+    <div class="ls-row" style="gap:6px;align-items:center;">
+      <span style="font-size:12px;opacity:.6;white-space:nowrap;">Роль инжекта:</span>
+      <select id="ls-inject-role" class="ls-num-input" style="width:auto;flex:1;max-width:180px;">
+        <option value="system">Система</option>
+        <option value="user">Пользователь</option>
+        <option value="assistant">Ассистент</option>
+      </select>
+    </div>
+    <div class="ls-row" style="font-size:11px;opacity:.45;margin-top:-4px;">Если модель не пишет тег счёта — попробуй «Пользователь»: многие модели и пресеты лучше слушаются такой роли.</div>
     <div class="ls-row"><label class="checkbox_label" for="ls-hide-rules"><input type="checkbox" id="ls-hide-rules"><span><i class="fa-solid fa-mask" style="margin-right:6px;opacity:.85;"></i>Скрытые правила (не показывать боту таблицу очков)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-scale-compact"><input type="checkbox" id="ls-scale-compact"><span><i class="fa-solid fa-compress" style="margin-right:6px;opacity:.85;"></i>Компактная шкала — слать боту только текущий диапазон и соседние, а не все сразу</span></label></div>
     <div class="ls-row" style="gap:8px;align-items:center;flex-wrap:wrap;"><label class="checkbox_label" for="ls-strip-tags"><input type="checkbox" id="ls-strip-tags"><span><i class="fa-solid fa-eraser" style="margin-right:6px;opacity:.85;"></i>Вырезать теги из старых постов (экономит токены; в самом чате они остаются)</span></label>
@@ -1173,7 +1182,7 @@ export function renderDebug() {
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${pending.length}</span><span class="ls-debug-stat-key">Событий в очереди</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.autoSuggestEnabled?msgCtr+' / '+interval:'выкл'}</span><span class="ls-debug-stat-key">Авто-реген</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${c.gradualProgression?'±2':'без огр.'}</span><span class="ls-debug-stat-key">SlowBurn</span></div>
-      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''}${c.scaleCompact?' · '+tr('шкала сжата'):''} · @${c.injectDepth??0}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
+      <div class="ls-debug-stat"><span class="ls-debug-stat-val">${tr(({strict:'строгий',hints:'подсказки',monologue:'монолог'})[c.injectTone||'strict'])}${c.hideRules?' · '+tr('скрыто'):''}${c.scaleCompact?' · '+tr('шкала сжата'):''} · @${c.injectDepth??0}${c.injectRole&&c.injectRole!=='system'?' · '+c.injectRole:''}</span><span class="ls-debug-stat-key">Тон инжекта</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val" style="${c.hardcoreMode?'color:#ff5577;':''}">${c.hardcoreMode?('+'+(c.hardcorePositiveCap ?? 0.5)+' / ×'+(c.hardcoreNegativeMult ?? 2)):'выкл'}</span><span class="ls-debug-stat-key">Hardcore</span></div>
       ${c.hardcoreMode?`<div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcStaleCounter||0)} / ${c.hardcoreDecayInterval ?? 3}</span><span class="ls-debug-stat-key">Простой (до decay)</span></div>
       <div class="ls-debug-stat"><span class="ls-debug-stat-val">${(d._hcBreakthroughCD||0)>0?(d._hcBreakthroughCD+' '+tr('сообщ.')):tr('готов')}</span><span class="ls-debug-stat-key">Прорыв</span></div>`:''}
@@ -1304,6 +1313,7 @@ export function syncUI() {
   const qs = el('ls-quiet-scoring'); if (qs) qs.checked = c.quietScoring !== false;
   const it = el('ls-inject-tone'); if (it) it.value = c.injectTone || 'strict';
   const idp = el('ls-inject-depth'); if (idp) idp.value = c.injectDepth ?? 0;
+  const irl = el('ls-inject-role'); if (irl) irl.value = c.injectRole || 'system';
   const hc = el('ls-hardcore'); if (hc) hc.checked = c.hardcoreMode || false;
   const hcBody = el('ls-hardcore-body'); if (hcBody) hcBody.style.display = c.hardcoreMode ? '' : 'none';
   const hcCap = el('ls-hc-cap'); if (hcCap) hcCap.value = c.hardcorePositiveCap ?? 0.5;
@@ -1392,6 +1402,7 @@ export function bindMainEvents() {
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
   $('#ls-quiet-scoring').off('change').on('change', function() { cfg().quietScoring=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🤫 Подсчёт спрятан от размышлений модели':'Подсчёт снова открыт для размышлений'); });
   $('#ls-inject-tone').off('change').on('change', function() { cfg().injectTone=this.value; saveSettingsDebounced(); updatePromptInjection(); });
+  $('#ls-inject-role').off('change').on('change', function() { cfg().injectRole=this.value; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-inject-depth').off('input change').on('input change', function() {
     const v = Math.max(0, Math.min(8, parseInt(this.value, 10) || 0));
     cfg().injectDepth = v; this.value = v;
