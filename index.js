@@ -3,7 +3,7 @@ import { extension_settings } from '../../../extensions.js';
 import { EXT_NAME, defaultSettings, cfg, pruneEmptyChatData } from './config.js';
 import { injectStyles, syncUI, bindMainEvents, renderDebug, openLoveScorePanel } from './ui.js';
 import { createWidget, refreshWidget } from './heart.js';
-import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart, onMessageSwiped, onChatCompletionPromptReady, onTextPromptReady, onGroupGenerationStart, resetGroupSpeaker, setRosterRenderHook } from './prompt.js';
+import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGenerationStart, onMessageSwiped, onChatCompletionPromptReady, onTextPromptReady, onGroupGenerationStart, resetGroupSpeaker, setRosterRenderHook, onStreamToken, resetStreamBuf } from './prompt.js';
 import { renderGroupNpcs, showAutoRegenStatus, autoRegenAll } from './ai.js';
 import { renderScoreLog, renderMilestones } from './ui.js';
 import { tr } from './i18n.js';
@@ -83,6 +83,10 @@ jQuery(() => {
     if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, (type, _opts, dryRun) =>
       onSwipeGenerationStart(type, dryRun)
     );
+
+    // Стриминг: запоминаем накопленный текст (там теги ещё целы) на случай, если из итогового поста их вырежут
+    if (event_types.STREAM_TOKEN_RECEIVED) eventSource.on(event_types.STREAM_TOKEN_RECEIVED, onStreamToken);
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, (_t, _o, dryRun) => { if (!dryRun) resetStreamBuf(); });
 
     // Старые теги — из исходящего промпта (чат не меняется)
     if (event_types.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);

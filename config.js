@@ -34,6 +34,7 @@ export const defaultSettings = {
   injectTone: 'strict',         // тон инжекта: 'strict' | 'hints' | 'monologue'
   injectDepth: 0,               // глубина инжекта в чате (IN_CHAT): 0 = вплотную к ответу; выше = дальше вверх по истории (слабее фиксация reasoning-моделей)
   scoreReason: true,            // AI добавляет короткое обоснование в тег [LOVE_SCORE:X:причина] — пишется в лог истории
+  restoreStreamTag: true,       // если тег был виден при стриминге, а в итоговом посте пропал (trim/regex) — вернуть его из стрима
   injectRole: 'system',         // роль сообщения-инжекта: 'system' | 'user' | 'assistant' (часть моделей/пресетов лучше слушается user)
   quietScoring: true,           // подсчёт — «тихая» служебная операция: не размышлять/не считать вслух в reasoning, тег только в конце видимого ответа
   // ── Streak и импульс события ──

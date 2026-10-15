@@ -399,6 +399,8 @@ export const DICT = {
   'Тон инжекта:': 'Injection tone:',
   'Глубина инжекта:': 'Injection depth:',
   'Роль инжекта:': 'Injection role:',
+  'Вернуть тег из стрима, если его вырезало после генерации': 'Restore the tag from the stream if it was stripped after generation',
+  'Тег счёта был вырезан из поста после стриминга — Love Score вернул его из стрима.': 'The score tag was stripped from the post after streaming — Love Score restored it from the stream.',
   'Система': 'System',
   'Пользователь': 'User',
   'Ассистент': 'Assistant',

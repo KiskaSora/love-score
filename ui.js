@@ -625,7 +625,8 @@ export function settingsPanelHTML() {
       <input type="number" id="ls-keep-tags" class="ls-num-input" min="0" max="20" step="1" value="${cfg().keepTagMsgs ?? 3}" title="Сколько последних постов оставить с тегами как образец для модели" style="width:56px;">
       <span style="font-size:12px;opacity:.75;">постах</span></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>
-    <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>`;
+    <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>
+    <div class="ls-row"><label class="checkbox_label" for="ls-restore-stream-tag"><input type="checkbox" id="ls-restore-stream-tag"><span><i class="fa-solid fa-rotate-left" style="margin-right:6px;opacity:.85;"></i>Вернуть тег из стрима, если его вырезало после генерации</span></label></div>`;
 
   const rulesContent = `
     <div class="ls-section-title" style="margin-top:0;">Правила изменения</div>
@@ -1311,6 +1312,7 @@ export function syncUI() {
   const stt = el('ls-strip-tags'); if (stt) stt.checked = c.stripOldTags !== false;
   const sr = el('ls-score-reason'); if (sr) sr.checked = c.scoreReason !== false;
   const qs = el('ls-quiet-scoring'); if (qs) qs.checked = c.quietScoring !== false;
+  const rst = el('ls-restore-stream-tag'); if (rst) rst.checked = c.restoreStreamTag !== false;
   const it = el('ls-inject-tone'); if (it) it.value = c.injectTone || 'strict';
   const idp = el('ls-inject-depth'); if (idp) idp.value = c.injectDepth ?? 0;
   const irl = el('ls-inject-role'); if (irl) irl.value = c.injectRole || 'system';
@@ -1401,6 +1403,7 @@ export function bindMainEvents() {
   $('#ls-scale-compact').off('change').on('change', function() { cfg().scaleCompact=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'Шкала сжата — боту шлём только соседние диапазоны':'Шкала снова целиком в инжекте'); });
   $('#ls-score-reason').off('change').on('change', function() { cfg().scoreReason=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'📝 AI будет писать причину к счёту в лог':'Обоснование в логе выключено'); });
   $('#ls-quiet-scoring').off('change').on('change', function() { cfg().quietScoring=this.checked; saveSettingsDebounced(); updatePromptInjection(); toast('info', this.checked?'🤫 Подсчёт спрятан от размышлений модели':'Подсчёт снова открыт для размышлений'); });
+  $('#ls-restore-stream-tag').off('change').on('change', function() { cfg().restoreStreamTag=this.checked; saveSettingsDebounced(); });
   $('#ls-inject-tone').off('change').on('change', function() { cfg().injectTone=this.value; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-inject-role').off('change').on('change', function() { cfg().injectRole=this.value; saveSettingsDebounced(); updatePromptInjection(); });
   $('#ls-inject-depth').off('input change').on('input change', function() {

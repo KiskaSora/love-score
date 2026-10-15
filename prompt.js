@@ -1,7 +1,7 @@
 import { saveSettingsDebounced, setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
 import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getAiMsgCount, getNativeGroup, npcMatches, syncGroupRoster, SNAP_CAP } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
-import { stripOldTagsFromMessages, stripOldTagsFromPrompt } from './tagstrip.js';
+import { stripOldTagsFromMessages, stripOldTagsFromPrompt, LS_TAG_RE } from './tagstrip.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
 // ─── Нативная группа: кто сейчас говорит ──────────────────────────────────────
@@ -603,6 +603,28 @@ function reindexSnapshots(d, chat) {
   d._msgSnapshots = out;
 }
 
+// ─── Теги из стрима ──────────────────────────────────────────────────────────
+// При стриминге таверна присылает накопленный текст по ходу генерации. Теги видны
+// в нём, даже если потом «Удалять неоконченные предложения», regex-скрипт или другое
+// расширение вырежет их из итогового поста. Запоминаем последний накопленный текст,
+// и если в готовом посте тега счёта нет, а в стриме он был — возвращаем его в пост.
+let _streamText = '';
+export function onStreamToken(text) { if (typeof text === 'string') _streamText = text; }
+export function resetStreamBuf() { _streamText = ''; }
+
+function restoreTagsFromStream(msg) {
+  const buf = _streamText; _streamText = '';
+  if (!buf || cfg().restoreStreamTag === false) return false;
+  if (LOVE_SCORE_TAG.test(msg.mes || '') || !LOVE_SCORE_TAG.test(buf)) return false;
+  const tags = buf.match(new RegExp(LS_TAG_RE.source, 'gi'));
+  if (!tags?.length) return false;
+  const fixed = String(msg.mes || '').replace(/\s+$/, '') + '\n' + tags.join('\n');
+  msg.mes = fixed;
+  if (Array.isArray(msg.swipes) && msg.swipes[msg.swipe_id ?? 0] !== undefined) msg.swipes[msg.swipe_id ?? 0] = fixed;
+  try { SillyTavern.getContext().saveChat?.(); } catch {}
+  return true;
+}
+
 // ─── Обработчик входящих сообщений ───────────────────────────────────────────
 export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, renderGroupNpcs, showAutoRegenStatus, autoRegenAll, type) {
   if (!cfg().isEnabled) return;
@@ -610,9 +632,11 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
     const chat = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext().chat : window.chat;
     if (!chat?.length) return;
     const msg = chat[chat.length-1]; if (!msg || msg.is_user) return;
+    const restored = restoreTagsFromStream(msg);
     const text = msg.mes || '';
     const d = chatLoveData();
     const c = cfg();
+    if (restored) toast('info', 'Тег счёта был вырезан из поста после стриминга — Love Score вернул его из стрима.');
 
     // Рерол/свайп: то же сообщение перегенерировано — откатить эффект отклонённого
     // ответа к снимку «до сообщения», затем применить новый свайп от исходного счёта.
