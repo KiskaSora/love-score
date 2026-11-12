@@ -5,6 +5,7 @@ import { updatePromptInjection, buildPrompt }            from './prompt.js';
 import { savePreset, importPresetFromJSON, exportPresetJSON, deletePreset, loadPresetUI, autoSnapshot, saveCharProfile, deleteCharProfile, applyCharProfileToCurrentChat } from './state.js';
 import { renderGroupNpcs, renderGenLorebookPicker, _syncSourceCards, _updateGenLbCounter, onGenerateClick, onGenerateEventsClick, onGenerateRoutesClick, onAnalyzeClick, getConnectionProfiles, autoRegenAll, showAutoRegenStatus, scanChatForNpcs, renderLorebookPicker, mkNpc, saveGroupNpcs, getCurrentCharacterCard, updateCharPreview, _getValidLbIds } from './ai.js';
 import { observeTree, tr } from './i18n.js';
+import { autoCardHTML, autoProfilePaneHTML, storageDangerHTML, diagHTML, autoviewSync, autoviewDash, bindAutoView } from './autoview.js';
 
 // ─── Стили ────────────────────────────────────────────────────────────────────
 export function injectStyles() {
@@ -538,6 +539,8 @@ export function settingsPanelHTML() {
   // ── Вкладка «Обзор»: живое состояние, история, шрамы ──
   const overviewContent = `
     <div class="ls-row"><label class="checkbox_label" for="ls-enabled"><input type="checkbox" id="ls-enabled"><span>Включено</span></label></div>
+    <div id="ls-auto-wizard"></div>
+    <div id="ls-auto-overview" class="ls-show-auto"></div>
     <div class="ls-row">
       <span style="font-size:12px;opacity:.6;">Очки:</span>
       <input id="ls-val" type="number" step="any" class="ls-num-input" style="width:72px;">
@@ -545,18 +548,24 @@ export function settingsPanelHTML() {
       <input id="ls-max" type="number" min="1" class="ls-num-input" style="width:72px;">
       <button id="ls-reset-btn" class="menu_button">Сбросить</button>
     </div>
+    <div class="ls-hide-auto">
     <div class="ls-rel-type-row">
       ${Object.entries(RELATION_TYPES).map(([k,v]) => `<span class="ls-rel-type-btn ls-rt-${k}" data-rt="${k}" title="${v.label}">${rtIcon(k)}</span>`).join('')}
       <span class="ls-rel-type-label" id="ls-rt-label"></span>
     </div>
     <div id="ls-type-info"></div>
     <div id="ls-active-state" style="display:none;"><strong>Сейчас:</strong> <span id="ls-active-text"></span></div>
+    </div>
     <div id="ls-sparkline-section" style="display:none;">
       <div class="ls-sparkline-label">Динамика очков</div>
       <div id="ls-sparkline"></div>
     </div>
+    <div class="ls-hide-auto">
     <div class="ls-section-title" style="display:flex;align-items:center;justify-content:space-between;">История <button id="ls-log-clear" class="menu_button ls-log-clear">очистить</button></div>
     <div id="ls-score-log"></div>
+    </div>
+    <div id="ls-auto-log" class="ls-show-auto"></div>
+    <div class="ls-hide-auto">
     <div id="ls-scars-section" style="display:none;">
       <div class="ls-section-title"><i class="fa-solid fa-bandage" style="margin-right:6px;opacity:.7;"></i>Шрамы</div>
       <div class="ls-hint">Глубокие обиды, которые персонаж помнит даже после примирения.</div>
@@ -565,10 +574,14 @@ export function settingsPanelHTML() {
         <button id="ls-scar-add-btn" class="menu_button" style="white-space:nowrap;">+ Шрам</button>
       </div>
       <div id="ls-scars-container"></div>
-    </div>`;
+    </div></div>`;
 
   // ── Вкладка «Режимы»: модификаторы-карточки + вид/инжект ──
   const modesContent = `
+    ${autoCardHTML(c, `<div class="ls-hint">Выбери профиль во вкладке AI. Профиль характера создаётся один раз и обновляется при изменении карточки или выбранного лорбука. После ответа — короткая оценка событий для следующего хода. Текст ответов не меняется. Пока только одиночные чаты без режима окружения.</div>
+<div class="ls-hint">В автоматическом режиме таблицы правил, события, Hardcore, серии и остывание не применяются. Старые настройки сохраняются для ручного режима. Существенный сюжетный прорыв может дать до +10.</div>`)}
+
+    <div class="ls-hide-auto">
     <div class="ls-section-title" style="margin-top:0;">Игровые модификаторы</div>
     <div class="ls-hint">Нажми на карточку, чтобы включить режим и раскрыть его настройки.</div>
     <div class="ls-mod-grid">
@@ -578,6 +591,7 @@ export function settingsPanelHTML() {
       ${modCard('ls-scars-enabled','#c77d8f','fa-bandage','Шрамы','Память о крупных обидах', c.scarsEnabled, scarsBody)}
       ${modCard('ls-streak-enabled','#e8923a','fa-fire','Серия','Бонус за плюсы подряд', (c.streakEnabled!==false), streakBody)}
       ${modCard('ls-momentum-enabled','#9a7bd6','fa-water','Импульс','Эхо после крупного сдвига', (c.momentumEnabled!==false), momentumBody)}
+    </div>
     </div>
     <div class="ls-section-title">Вид и инжект</div>
     <div class="ls-row">
@@ -596,6 +610,7 @@ export function settingsPanelHTML() {
       <label class="checkbox_label" style="margin:0;gap:5px;"><input type="checkbox" id="ls-show-sparkline"${c.showSparkline!==false?' checked':''}> <span>График истории</span></label>
     </div>
     <div class="ls-row"><label class="checkbox_label" for="ls-open-dblclick"><input type="checkbox" id="ls-open-dblclick"${c.openOnDblClick!==false?' checked':''}><span><i class="fa-solid fa-hand-pointer" style="margin-right:6px;opacity:.85;"></i>Двойной тап по сердечку открывает панель</span></label></div>
+    <div class="ls-hide-auto">
     <div class="ls-row" style="gap:6px;align-items:center;">
       <span style="font-size:12px;opacity:.6;white-space:nowrap;">Тон инжекта:</span>
       <select id="ls-inject-tone" class="ls-num-input" style="width:auto;flex:1;max-width:180px;">
@@ -603,6 +618,7 @@ export function settingsPanelHTML() {
         <option value="hints">Подсказки</option>
         <option value="monologue">Внутренний монолог</option>
       </select>
+    </div>
     </div>
     <div class="ls-row" style="gap:6px;align-items:center;">
       <span style="font-size:12px;opacity:.6;white-space:nowrap;">Глубина инжекта:</span>
@@ -617,6 +633,7 @@ export function settingsPanelHTML() {
         <option value="assistant">Ассистент</option>
       </select>
     </div>
+    <div class="ls-hide-auto">
     <div class="ls-row" style="font-size:11px;opacity:.45;margin-top:-4px;">Если модель не пишет тег счёта — попробуй «Пользователь»: многие модели и пресеты лучше слушаются такой роли.</div>
     <div class="ls-row"><label class="checkbox_label" for="ls-hide-rules"><input type="checkbox" id="ls-hide-rules"><span><i class="fa-solid fa-mask" style="margin-right:6px;opacity:.85;"></i>Скрытые правила (не показывать боту таблицу очков)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-scale-compact"><input type="checkbox" id="ls-scale-compact"><span><i class="fa-solid fa-compress" style="margin-right:6px;opacity:.85;"></i>Компактная шкала — слать боту только текущий диапазон и соседние, а не все сразу</span></label></div>
@@ -626,7 +643,7 @@ export function settingsPanelHTML() {
       <span style="font-size:12px;opacity:.75;">постах</span></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-score-reason"><input type="checkbox" id="ls-score-reason"><span><i class="fa-solid fa-comment-dots" style="margin-right:6px;opacity:.85;"></i>Обоснование в логе (AI пишет причину к счёту)</span></label></div>
     <div class="ls-row"><label class="checkbox_label" for="ls-quiet-scoring"><input type="checkbox" id="ls-quiet-scoring"><span><i class="fa-solid fa-volume-xmark" style="margin-right:6px;opacity:.85;"></i>Тихий подсчёт (не засорять размышления модели)</span></label></div>
-    <div class="ls-row"><label class="checkbox_label" for="ls-restore-stream-tag"><input type="checkbox" id="ls-restore-stream-tag"><span><i class="fa-solid fa-rotate-left" style="margin-right:6px;opacity:.85;"></i>Вернуть тег из стрима, если его вырезало после генерации</span></label></div>`;
+    <div class="ls-row"><label class="checkbox_label" for="ls-restore-stream-tag"><input type="checkbox" id="ls-restore-stream-tag"><span><i class="fa-solid fa-rotate-left" style="margin-right:6px;opacity:.85;"></i>Вернуть тег из стрима, если его вырезало после генерации</span></label></div></div>`;
 
   const rulesContent = `
     <div class="ls-section-title" style="margin-top:0;">Правила изменения</div>
@@ -778,6 +795,7 @@ export function settingsPanelHTML() {
     <div id="ls-preset-list"></div>`;
 
   const debugContent = `
+    ${diagHTML()}
     <div class="ls-hint">Просмотр текущего состояния системы, активных инжектов и как они работают.</div>
     <div class="ls-row" style="justify-content:space-between;">
       <span style="font-size:12px;opacity:.5;"><i class="fa-solid fa-circle-info" style="margin-right:5px;"></i>Данные обновляются при открытии вкладки</span>
@@ -796,13 +814,12 @@ export function settingsPanelHTML() {
       <label class="checkbox_label" style="margin:0;gap:5px;"><input type="checkbox" id="ls-storage-select-all"><span>Выбрать всё</span></label>
       <button id="ls-storage-delete-selected" class="menu_button" style="margin-left:auto;white-space:nowrap;" disabled>Удалить выбранное</button>
     </div>
-    <div id="ls-storage-list" style="margin-top:6px;"></div>`;
+    <div id="ls-storage-list" style="margin-top:6px;"></div>${storageDangerHTML()}`;
 
   // Внутренность панели — дашборд-шапка + горизонтальные вкладки. Переиспользуется в попапе wand-меню.
   function panelInnerHTML() {
     return `<div id="ls-panel-inner" class="ls-panel-inner">
       <div class="ls-dash">
-        <button class="ls-dash-collapse" id="ls-dash-toggle" title="Свернуть / развернуть шапку"><i class="fa-solid fa-chevron-up"></i></button>
         <div class="ls-dash-heart" id="ls-dash-heart">
           <svg viewBox="0 0 20 18"><path d="M10,17 C10,17 1,10.5 1,5 C1,2.2 3,0.5 5.6,0.5 C7.7,0.5 9.2,2 10,3.6 C10.8,2 12.3,0.5 14.4,0.5 C17,0.5 19,2.2 19,5 C19,10.5 10,17 10,17Z"/></svg>
           <div class="ls-dash-score"><div class="hh-num" id="ls-dash-num">0</div><div class="hh-den" id="ls-dash-den">/100</div></div>
@@ -811,12 +828,14 @@ export function settingsPanelHTML() {
         <div class="ls-dash-info">
           <div class="ls-dash-title"><i class="fa-solid fa-heart"></i> Love Score</div>
           <span class="ls-dash-chip" id="ls-dash-chip"></span>
+          <span class="ls-dash-status" id="ls-dash-status"></span>
         </div>
         <div class="ls-dash-spark" id="ls-dash-spark"></div>
       </div>
       <div class="ls-nav">
         <div class="ls-nav-tab active" data-tab="overview"><i class="fa-solid fa-chart-simple"></i><span>Обзор</span></div>
         <div class="ls-nav-tab" data-tab="modes"><i class="fa-solid fa-sliders"></i><span>Режимы</span></div>
+        <div class="ls-nav-tab ls-show-auto" data-tab="profile"><i class="fa-solid fa-id-card"></i><span>Профиль</span></div>
         <div class="ls-nav-tab" data-tab="rules"><i class="fa-solid fa-scroll"></i><span>Правила</span></div>
         <div class="ls-nav-tab" data-tab="ai"><i class="fa-solid fa-wand-magic-sparkles"></i><span>AI</span></div>
         <div class="ls-nav-tab" data-tab="group"><i class="fa-solid fa-users"></i><span>Окружение</span></div>
@@ -826,6 +845,7 @@ export function settingsPanelHTML() {
       </div>
       <div class="ls-tab-pane active" data-pane="overview">${overviewContent}</div>
       <div class="ls-tab-pane" data-pane="modes">${modesContent}</div>
+      <div class="ls-tab-pane" data-pane="profile">${autoProfilePaneHTML()}</div>
       <div class="ls-tab-pane" data-pane="rules">${rulesContent}</div>
       <div class="ls-tab-pane" data-pane="ai">${aiContent}</div>
       <div class="ls-tab-pane" data-pane="group">${groupContent}</div>
@@ -990,6 +1010,7 @@ export function renderHeaderDash() {
       spark.style.display = '';
     } else { spark.innerHTML = ''; spark.style.display = 'none'; }
   }
+  autoviewDash();
 }
 
 export function renderRoutes() {
@@ -1303,6 +1324,8 @@ export function renderStorage() {
 // ─── Синхронизация UI ─────────────────────────────────────────────────────────
 export function syncUI() {
   const c = cfg(), d = loveData(), el = id => document.getElementById(id);
+  const auto = el('ls-auto-slowburn'); if (auto) auto.checked = c.autoSlowBurn === true;
+  const pace = el('ls-auto-pace'); if (pace) pace.value = c.autoSlowBurnPace || 'slow';
   const cb = el('ls-enabled'); if (cb) cb.checked = c.isEnabled;
   const v  = el('ls-val');     if (v)  v.value = d.score;
   const m  = el('ls-max');     if (m)  m.value = d.maxScore;
@@ -1372,10 +1395,20 @@ export function syncUI() {
   if (cfg().groupMode) renderGroupNpcs();
   _updateGenLbCounter(); _syncSourceCards();
   refreshWidget();
+  autoviewSync();
 }
 
 // ─── Основные события ─────────────────────────────────────────────────────────
 export function bindMainEvents() {
+  bindAutoView();
+  if (!window._lsResetBound) { window._lsResetBound = true; document.addEventListener('ls-data-reset', () => { refreshWidget(); syncUI(); renderScoreLog(); renderMilestones(); renderStorage(); }); }
+  $('#ls-auto-slowburn').off('change').on('change', function() {
+    cfg().autoSlowBurn=this.checked; saveSettingsDebounced(); updatePromptInjection();
+    toast('info', this.checked ? 'Автоматический слоубёрн включён. Нужен профиль AI; группы используют прежний режим.' : 'Ручной режим включён');
+    autoviewSync();
+  });
+  $('#ls-auto-pace').off('change').on('change', function() { cfg().autoSlowBurnPace=this.value; saveSettingsDebounced(); updatePromptInjection(); });
+
   $('#ls-enabled').off('change').on('change', function() {
     cfg().isEnabled=this.checked; saveSettingsDebounced(); updatePromptInjection(); refreshWidget();
     toast('info', this.checked?'Love Score включён':'Love Score выключен — сердце скрыто, счёт не считается');
@@ -1651,3 +1684,4 @@ export function bindMainEvents() {
   });
   $(document).off('click','#ls-debug-refresh-btn').on('click','#ls-debug-refresh-btn', renderDebug);
 }
+

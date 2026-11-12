@@ -1,7 +1,11 @@
 import { saveSettingsDebounced, setExtensionPrompt, extension_prompt_types } from '../../../../script.js';
-import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getAiMsgCount, getNativeGroup, npcMatches, syncGroupRoster, SNAP_CAP } from './config.js';
+import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toast, addToLog, getActiveInterp, getPendingMilestones, roundScore, addScar, getActiveScars, getCurrentRoute, findMatchingRule, takeMsgSnapshot, restoreMsgSnapshot, takeFullState, restoreFullState, msgFp, getChat, getChatId, getAiMsgCount, getNativeGroup, npcMatches, syncGroupRoster, SNAP_CAP } from './config.js';
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
 import { stripOldTagsFromMessages, stripOldTagsFromPrompt, LS_TAG_RE } from './tagstrip.js';
+
+import { autoModeActive, buildAutoPrompt, reviewAutoMessage } from './slowburn-observer.js';
+import { reviewedRecord, branchRecord } from './slowburn-core.js';
+import { relationshipGuidance, initialColdStart } from './relationship-model.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
 // ─── Нативная группа: кто сейчас говорит ──────────────────────────────────────
@@ -27,6 +31,7 @@ function getSpeakerNpc(d, c) {
 function speakerView(real, sp) {
   return Object.assign({}, real, {
     score: sp.score, maxScore: sp.maxScore || real.maxScore, relationType: sp.relationType || 'neutral',
+    relationshipContext: {},
     scars: [], milestones: [], routes: [], _currentRoute: null,
     _momentumTurns: 0, _momentumDir: 0, _hcBreakthroughCD: 0, _coldStarted: false,
   });
@@ -34,6 +39,7 @@ function speakerView(real, sp) {
 
 export function buildPrompt() {
   const c = cfg(), real = chatLoveData(); if (!c.isEnabled) return '';
+  if (autoModeActive()) return buildAutoPrompt(real);
   const sp = getSpeakerNpc(real, c);
   const d  = sp ? speakerView(real, sp) : real;
   const changes  = (d.scoreChanges         || []).filter(x => x.description.trim());
@@ -44,9 +50,10 @@ export function buildPrompt() {
   const tone = c.injectTone || 'strict';
 
   let p = '[OOC: LOVE SCORE] Score: '+d.score+' / '+d.maxScore+' (min '+MIN_SCORE+').';
+  p += '\n'+relationshipGuidance(d);
   if (d.score < 0) {
-    if (d._coldStarted) p += '\nCold start: a wary stranger, trust not yet earned — distant and cautious, not cruel. Warmth must be earned.';
-    else p += '\nNegative zone: the character feels hostility or distrust toward the player.';
+    if (initialColdStart(d)) p += '\nCold start: a wary stranger, trust not yet earned — distant and cautious, not cruel. Warmth must be earned.';
+    else p += '\nNegative zone: conflict depth; use the selected states and history, without inferring hatred, fear or actions from the number alone.';
   }
 
   // Поведение под текущий счёт
@@ -202,7 +209,8 @@ export function buildPrompt() {
   let scoreDesc = '  REQUIRED every single response, never omit it; current score is '+d.score+'; X = the new total score '+MIN_SCORE+'..'+d.maxScore+', or a signed change like +3 / -2'+(c.hardcoreMode ? ' (decimals ok, e.g. '+(roundScore(d.score + (c.hardcorePositiveCap ?? 0.5)))+')' : '');
   if (wantReason) scoreDesc += '; reason = a SHORT phrase (2-6 words) in the language of the conversation naming what caused the change — omit ":reason" if the score did not change';
   tags.push((wantReason ? '<!-- [LOVE_SCORE:X:reason] -->' : '<!-- [LOVE_SCORE:X] -->')+scoreDesc);
-  if (d.relationType === 'neutral' || !d.relationType)
+  if (d.relationshipContext?.locked) { /* User-selected bond is authoritative. */ }
+  else if (d.relationType === 'neutral' || !d.relationType)
     tags.push('<!-- [RELATION_TYPE:key] -->  once type is evident; key: '+_rtKeys);
   else
     tags.push('<!-- [RELATION_TYPE:key] -->  if type changes; key: '+_rtKeys);
@@ -213,6 +221,7 @@ export function buildPrompt() {
   const outHead = (c.quietScoring !== false)
     ? 'OUTPUT — silent bookkeeping, NOT part of the story. Do not think about, weigh, recalculate, justify or mention the score, these tags or this block in your reasoning/thinking; just write your reply in character, then append on the very last line only what applies. The LOVE_SCORE line is mandatory every time, even with no change — repeat the same number:'
     : 'OUTPUT — append at the very end, only what applies. The LOVE_SCORE line is mandatory every time, even with no change — repeat the same number:';
+  p += '\n\nSIGN CONVENTION overrides any old inverted hatred rules: positive changes mean improved regard or reduced antagonism, never deeper hatred or fixation. Selected bond and states override generic romantic wording in old scale descriptions. A truce is not romance.';
   p += '\n\n'+outHead+'\n'+tags.join('\n');
 
   return p;
@@ -235,6 +244,7 @@ export function updatePromptInjection() {
     _lastInjected = c.isEnabled ? buildPrompt() : '';
     const role = INJECT_ROLES[c.injectRole] ?? INJECT_ROLES.system;
     setExtensionPrompt(PROMPT_KEY, _lastInjected, extension_prompt_types.IN_CHAT, depth, false, role);
+    _injectionSnapshot = {text:_lastInjected,role,depth,enabled:c.isEnabled,chatId:getChatId(),at:Date.now()};
   }
   catch(e) { toast('error', 'Ошибка промпта: '+e.message); }
 }
@@ -242,6 +252,12 @@ export function updatePromptInjection() {
 // ─── Вырезание старых тегов из исходящего промпта ─────────────────────────────
 // Хранится сам чат нетронутым — чистится только то, что уходит модели.
 let _lastInjected = '';
+let _injectionSnapshot = null;
+// Return the text actually installed by the extension, never rebuild it merely
+// for inspection and never expose the previous chat's prompt after a switch.
+export function getCurrentInjection() {
+  return _injectionSnapshot?.chatId === getChatId() ? {..._injectionSnapshot} : null;
+}
 let renderGroupNpcsHook = null;   // подставляется из index.js, чтобы панель NPC обновилась при добавлении участников
 export function setRosterRenderHook(fn) { renderGroupNpcsHook = fn; }
 export function onChatCompletionPromptReady(data) {
@@ -273,6 +289,18 @@ function routeTagsToNpc(text, npc) {
 }
 
 function applyScoring(d, c, text, S, aiIndex, msg) {
+  if (msg?.extra?.lsAutoUnverified === msg?.mes) return;
+  const reviewed = msg ? branchRecord(getChat(), getChat().indexOf(msg)) : null;
+  if (reviewed) {
+    const before = d.score;
+    d.score = roundScore(Math.max(MIN_SCORE, Math.min(d.maxScore, before + reviewed.delta)));
+    if (d.score !== before) { addToLog(d, roundScore(d.score-before), reviewed.reason); S.pulse(); }
+    S.refresh(); S.syncUI(); S.renderScoreLog();
+    return; // Review delta is authoritative: no legacy streak/decay/rule bonuses.
+  }
+  // In automatic mode only validated checkpoints may change the score.
+  // Accidental legacy tags and invalidated branch records have no authority.
+  if (autoModeActive()) return;
   // Нативная группа: теги поста говорят про СВЯЗЬ ЭТОГО персонажа — переносим в его NPC-запись,
   // основной счёт не трогаем.
   if (c.groupMode && msg && getNativeGroup()) {
@@ -425,7 +453,7 @@ function applyScoring(d, c, text, S, aiIndex, msg) {
 
   // Тип отношений
   const rtm = text.match(/<!--\s*\[RELATION_TYPE:([\w]+)\]\s*-->/i);
-  if (rtm) {
+  if (rtm && !d.relationshipContext?.locked) {
     const key = rtm[1].toLowerCase();
     if (RELATION_TYPES[key] && key !== d.relationType) {
       d.relationType = key;
@@ -524,7 +552,7 @@ function recomputeFromChat(d, c) {
 
   // В чате нет ни одного тега — счёт ведут вручную (или теги стёрли при
   // редактировании). Обнулять нечего: сохраняем состояние, чиним только индексы.
-  if (!aiMsgs.some(m => ANY_LS_TAG.test(m.mes || ''))) { reindexSnapshots(d, chat); return false; }
+  if (!aiMsgs.some(m => { const r=branchRecord(chat,chat.indexOf(m)); return (r&&!r.local)||(!autoModeActive()&&ANY_LS_TAG.test(m.mes||'')); })) { reindexSnapshots(d, chat); return false; }
 
   // Что пересчёт восстановить не сможет — забираем до сброса.
   const manual    = manualScoreOffset(d);
@@ -626,14 +654,14 @@ function restoreTagsFromStream(msg) {
 }
 
 // ─── Обработчик входящих сообщений ───────────────────────────────────────────
-export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, renderGroupNpcs, showAutoRegenStatus, autoRegenAll, type) {
+export async function onMessageReceived(syncUI, renderScoreLog, renderMilestones, renderGroupNpcs, showAutoRegenStatus, autoRegenAll, type) {
   if (!cfg().isEnabled) return;
   try {
     const chat = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext().chat : window.chat;
     if (!chat?.length) return;
     const msg = chat[chat.length-1]; if (!msg || msg.is_user) return;
-    const restored = restoreTagsFromStream(msg);
-    const text = msg.mes || '';
+    const restored = autoModeActive() ? false : restoreTagsFromStream(msg);
+    let text = msg.mes || '';
     const d = chatLoveData();
     const c = cfg();
     if (restored) toast('info', 'Тег счёта был вырезан из поста после стриминга — Love Score вернул его из стрима.');
@@ -643,11 +671,14 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
     // Снимки храним стеком по индексам сообщений — этот же стек даёт точный откат
     // при удалении сообщений в таверне (см. onMessageDeleted).
     const idx = chat.length - 1;
+    if (autoModeActive() && idx < (d._autoFloor || 0)) {
+      if (type === 'ls-force-review') toast('info', 'Это сообщение уже входит в исходное состояние. Дождись нового ответа персонажа.');
+      return;
+    }
     // continue дописывает ТОТ ЖЕ пост: считать надо его итоговый текст целиком,
     // иначе тег из первой части учитывается второй раз.
-    const isReroll = (type === 'swipe' || type === 'regenerate' || type === 'continue');
     const stack = d._msgSnapshots || (d._msgSnapshots = []);
-    const existing = isReroll ? stack.find(e => e.idx === idx) : null;
+    const existing = stack.find(e => e.idx === idx);
     if (existing) {
       restoreMsgSnapshot(d, c, existing.snap);   // снимок оставляем для следующих реролов
       existing.key = msgFp(msg);                 // обновить отпечаток под текущий свайп
@@ -659,6 +690,14 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
       if (stack.length > SNAP_CAP) stack.splice(0, stack.length - SNAP_CAP);
     }
 
+    if (autoModeActive()) {
+      if (!await reviewAutoMessage(msg, d.score, {force:type === 'ls-force-review'})) { saveSettingsDebounced(); updatePromptInjection(); return; }
+      if (SillyTavern.getContext().chat !== chat || chat[chat.length-1] !== msg || chatLoveData() !== d) return;
+      text = msg.mes || '';
+      const snapshot = stack.find(e => e.idx === idx);
+      if (snapshot) snapshot.key = msgFp(msg);
+    }
+
     // Применить теги поста к состоянию — с живыми сайд-эффектами (тосты, сердце, UI).
     applyScoring(d, c, text, {
       toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
@@ -667,14 +706,14 @@ export function onMessageReceived(syncUI, renderScoreLog, renderMilestones, rend
 
     // Модель не вписала тег счёта вообще — раньше это молча проходило мимо,
     // и юзер не понимал, почему очки не сдвинулись. Явно сигналим об этом.
-    if (!LOVE_SCORE_TAG.test(text)) {
+    if (!LOVE_SCORE_TAG.test(text) && !reviewedRecord(msg) && !autoModeActive()) {
       toast('warning', 'В ответе нет тега счёта — Love Score не обновился в этом посте.');
     }
 
     saveSettingsDebounced(); updatePromptInjection();
 
     // Авто-регенерация правил (только живой путь)
-    if (c.autoSuggestEnabled) {
+    if (c.autoSuggestEnabled && !autoModeActive()) {
       c._autoSuggestMsgCounter = (c._autoSuggestMsgCounter || 0) + 1;
       const interval = Math.max(5, parseInt(c.autoSuggestInterval) || 20);
       saveSettingsDebounced();
@@ -720,7 +759,7 @@ export function onMessageSwiped(mesId, ui) {
         toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
         syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){},
       }, getChat().slice(0, idx + 1).filter(m => m && !m.is_user).length, msg);
-      if (!LOVE_SCORE_TAG.test(msg.mes || '')) {
+      if (!LOVE_SCORE_TAG.test(msg.mes || '') && !reviewedRecord(msg) && !autoModeActive()) {
         toast('warning', 'В этом варианте свайпа нет тега счёта — Love Score не обновился.');
       }
     }
@@ -802,3 +841,4 @@ export function onMessageDeleted(newLen, ui) {
 }
 
 function _pluralMsg(n) { return n===1?'сообщение':n<5?'сообщения':'сообщений'; }
+
