@@ -636,6 +636,21 @@ const AUTO_CSS = `
   flex-direction:column;gap:3px;padding:8px 2px!important;font-size:11px;
  }
  .ls-mobile-shell .ls-chip,.ls-mobile-shell .ls-stage{max-width:100%;overflow-wrap:anywhere}
+ /* FIX: верх контента не обрезается; скроллится только .popup-content, кнопка «Закрыть» всегда внизу */
+ dialog:has(.ls-panel-inner),.ls-mobile-shell{
+  overflow:hidden!important;justify-content:flex-start!important;align-items:stretch!important;
+  align-content:flex-start!important;padding:8px 12px max(10px,env(safe-area-inset-bottom))!important;
+ }
+ dialog:has(.ls-panel-inner) .popup-body,.ls-mobile-shell .popup-body{
+  display:flex!important;flex-direction:column!important;justify-content:flex-start!important;
+  flex:1 1 auto!important;min-height:0!important;max-height:100%!important;overflow:hidden!important;
+ }
+ dialog:has(.ls-panel-inner) .popup-content,.ls-mobile-shell .popup-content{
+  flex:1 1 auto!important;min-height:0!important;max-height:none!important;
+  overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+ }
+ dialog:has(.ls-panel-inner) .popup-controls,.ls-mobile-shell .popup-controls{flex:0 0 auto!important;margin-top:6px}
 }
 `;
 export function injectAutoStyles() {
