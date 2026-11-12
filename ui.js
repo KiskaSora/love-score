@@ -885,6 +885,26 @@ export async function openLoveScorePanel() {
       });
       // Класс на корне попапа для наших медиа-стилей
       try { popup.dlg?.classList?.add('ls-popup-wide'); } catch {}
+      // FIX мобилки: жёстко ограничиваем высоту окна реальной высотой экрана (в px), скроллится только контент
+      const fit = () => { try {
+        const dlg = popup.dlg; if (!dlg || !dlg.isConnected) return;
+        const content = dlg.querySelector('.popup-content'); if (!content) return;
+        if (window.innerWidth > 560) { dlg.style.removeProperty('max-height'); content.style.removeProperty('max-height'); return; }
+        const vv = window.visualViewport;
+        const vh = Math.min(window.innerHeight, vv && vv.height ? vv.height : 1e9);
+        const maxH = Math.floor(vh * 0.92);
+        const cs = getComputedStyle(dlg);
+        const ctrl = dlg.querySelector('.popup-controls');
+        const reserved = (ctrl ? ctrl.offsetHeight + 8 : 0) + (parseFloat(cs.paddingTop)||0) + (parseFloat(cs.paddingBottom)||0) + 34;
+        dlg.style.setProperty('max-height', maxH + 'px', 'important');
+        dlg.style.setProperty('overflow', 'hidden', 'important');
+        content.style.setProperty('max-height', Math.max(160, maxH - reserved) + 'px', 'important');
+        content.style.setProperty('overflow-y', 'auto', 'important');
+        content.scrollTop = 0;
+      } catch {} };
+      [0, 80, 300].forEach(t => setTimeout(fit, t));
+      window.addEventListener('resize', fit);
+      try { window.visualViewport?.addEventListener('resize', fit); } catch {}
       // Контент в DOM — навешиваем обработчики и синхронизируем
       setTimeout(() => { try { bindMainEvents(); syncUI(); observeTree(document.getElementById('ls-popup-root')); } catch(e){ console.error('[LoveScore]', e); } }, 0);
       await popup.show();
