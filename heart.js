@@ -1,6 +1,7 @@
 import { saveSettingsDebounced } from '../../../../script.js';
 import { cfg, loveData, RELATION_TYPES, escHtml, getActiveInterp, fmtScore, getTrend } from './config.js';
 import { tr as i18nTr } from './i18n.js';
+import { autoStage, autoStageOn } from './autostage.js';
 
 // ─── Цветовые хелперы ────────────────────────────────────────────────────────
 export function _h2r(hex) {
@@ -14,6 +15,7 @@ export function _lerpHex(a, b, t) {
 
 // ─── Цвета сердца (SVG стиль) ─────────────────────────────────────────────────
 export function heartColor(score, max, rt='neutral') {
+  if (autoStageOn(cfg())) return autoStage(score, max).color;   // авто-режим: цвет по стадии
   const _t = RELATION_TYPES[rt] || RELATION_TYPES.neutral;
   const r  = Math.max(0, Math.min(1, Math.abs(score) / (score >= 0 ? max : 100)));
   if (score >= 0) {
@@ -28,6 +30,7 @@ export function heartColor(score, max, rt='neutral') {
 }
 
 export function heartStroke(score, rt='neutral') {
+  if (autoStageOn(cfg())) { const [ar,ag,ab] = _h2r(autoStage(score, loveData().maxScore || 100).color); return `rgba(${ar},${ag},${ab},.55)`; }
   if (score >= 0) {
     const r = Math.max(0, Math.min(1, score / (loveData().maxScore || 100)));
     if (r < 0.15) return 'rgba(200,200,200,.35)';
@@ -42,6 +45,7 @@ export function heartStroke(score, rt='neutral') {
 
 // ─── Цвета сердца (Blur стиль) ────────────────────────────────────────────────
 export function heartColorRgba(score, max, rt='neutral') {
+  if (autoStageOn(cfg())) { const [ar,ag,ab] = _h2r(autoStage(score, max).color); return `rgba(${ar},${ag},${ab},${0.15 + Math.max(0, Math.min(1, Math.abs(score) / max)) * 0.85})`; }
   const t     = RELATION_TYPES[rt] || RELATION_TYPES.neutral;
   const ratio = Math.max(0, Math.min(1, Math.abs(score) / (score >= 0 ? max : 100)));
   if (rt === 'hostile') {
@@ -136,7 +140,8 @@ export function clamp(val, lo, hi) { return Math.max(lo, Math.min(hi, val)); }
 export function updateWidgetGlow(rt, isNeg) {
   const c = cfg(), d = loveData();
   let r, g, b;
-  if (isNeg) { [r,g,b] = [60,220,60]; }
+  if (autoStageOn(c)) { [r,g,b] = _h2r(autoStage(d.score, d.maxScore || 100).color); }
+  else if (isNeg) { [r,g,b] = [60,220,60]; }
   else { [r,g,b] = _h2r((RELATION_TYPES[rt] || RELATION_TYPES.neutral).color); }
   // Hardcore: тепло проявляется только с ростом счёта — внизу холодная сталь
   if (c.hardcoreMode && !isNeg) {
@@ -297,3 +302,4 @@ export function flipWidget() {
   w.classList.add('ls-flip');
   w.addEventListener('animationend', () => { w.classList.remove('ls-flip'); refreshWidget(); }, { once: true });
 }
+

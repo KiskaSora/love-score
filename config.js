@@ -1,6 +1,7 @@
 import { saveSettingsDebounced, chat_metadata } from '../../../../script.js';
 import { extension_settings }    from '../../../extensions.js';
 import { tr }                    from './i18n.js';
+import { EXTRA_RELATION_TYPES } from './relationship-model.js';
 
 // ─── Константы ────────────────────────────────────────────────────────────────
 export const EXT_NAME   = 'love-score';
@@ -9,6 +10,7 @@ export const MIN_SCORE  = -100;
 
 // ─── Настройки по умолчанию ───────────────────────────────────────────────────
 export const defaultSettings = {
+  autoSlowBurn: true, autoSlowBurnPace: 'slow', autoReviewInterval: 15,
   isEnabled: true, maxScore: 100, gradualProgression: true,
   // ── Hardcore-режим ──
   hardcoreMode: false,          // главный флаг режима
@@ -82,9 +84,10 @@ export const RELATION_TYPES = {
   rival:      { label: 'Соперник',     color: '#2979ff', deep: '#003a99', icon: 'fa-hand-fist',           desc: 'Уважение через конкуренцию. Напряжённая динамика.',
     genGuide: 'Respect forged through competition. Patterns: challenges, taunts, grudging admiration, pushing each other to improve, crackling tension. Affection shows up as wanting the other at their best. Milestones: earning acknowledgment, a hard-won truce, fighting side by side, the rival admitting the player matters. Tone: charged, competitive, prideful.' },
   obsession:  { label: 'Одержимость',  color: '#a855f7', deep: '#5c00b0', icon: 'fa-heart-circle-bolt',   desc: 'Всепоглощающая фиксация. Тёмная, болезненная привязанность.',
-    genGuide: 'All-consuming, UNHEALTHY fixation — NOT cozy or safe. Patterns: possessiveness, idealization, obsessive focus on the player, anxiety and clinginess when apart, jealousy that ESCALATES instead of resolving, eroding the player\'s boundaries, a need for control reframed as devotion, mood swings between worship and panic. Milestones: demands for exclusivity, monitoring/checking up, dramatic declarations, terror of abandonment, refusal to let go. Tone: dark, intense, suffocating, feverish — clearly distinct from healthy romance.' },
+    genGuide: 'An unhealthy fixation, distinct from trust and reciprocal love. Portray its established possessiveness, jealousy or fear of abandonment in character without treating them as proof of consent or affection. Positive progress means improved regard, respect or reduced harmful antagonism, never escalating control or deeper obsession. No forced reciprocation or automatic romance.' },
   hostile:    { label: 'Ненависть',    color: '#2e8b00', deep: '#050f00', icon: 'fa-heart-crack',         desc: 'Открытая ненависть и враждебность. Перевёрнутое сердце — символ ненависти.',
-    genGuide: 'Open hatred and antagonism. Patterns: contempt, cruelty, threats, sabotage, cold rejection. "Positive" progress here does NOT mean warmth — it means hatred deepening into a charged, dangerous fixation or, at best, grudging restraint. Milestones: confrontations, humiliations, dangerous escalations, a wary standoff. Tone: cold, venomous, dangerous.' },
+    genGuide: 'Established hatred and antagonism rooted in actual history. Positive progress ALWAYS means improved regard: reduced hostility, earned restraint, recognition or a possible truce. Deepening hatred, cruelty or fixation is negative progress. Improvement does not imply attraction, forgiveness, romantic intimacy or automatic violence. Preserve character-specific reasons and unresolved barriers.' },
+  ...EXTRA_RELATION_TYPES,
 };
 
 // ─── Фабрика данных любви ─────────────────────────────────────────────────────
@@ -467,6 +470,7 @@ export function loveData() { return chatLoveData(); }
 // шрамы, NPC, маршруты и снимки, нетронутые правила, шкала и события. Всё, чего
 // человек хоть раз коснулся, остаётся. Текущий чат не трогаем.
 function isPristineChatData(d, defMiles) {
+  if (d.relationshipContext || d._autoBaseline || d._autoProfile || d._autoStartNote) return false;
   return (d.score ?? 0) === 0 &&
     !(d.scoreLog      || []).length && !(d.scars || []).length &&
     !(d.groupNpcs     || []).length && !(d.routes || []).length && !(d.arcs || []).length &&
@@ -636,3 +640,4 @@ export function addScar(d, text, delta, manual = false) {
   if (d.scars.length > 30) d.scars.length = 30;
   return d.scars[0];
 }
+
