@@ -44,6 +44,11 @@ export function autoCardHTML(c, hintsHtml = '') {
         <div class="ls-hint">Модель ставит особый пробел (U+2007) между словами в тексте оценки, расширение возвращает обычные.</div>
         <div class="ls-setup-row" style="margin-top:8px"><label for="ls-auto-timeout">Ждать ответ</label><select id="ls-auto-timeout" class="ls-num-input"><option value="45">45 с</option><option value="90">90 с</option><option value="180">180 с</option><option value="300">300 с</option></select></div>
         <div class="ls-hint">Для моделей, которые долго «размышляют».</div>
+        <div class="ls-setup-row" style="margin-top:8px"><label for="ls-auto-tok-profile">Лимит ответа: профиль</label><input type="number" id="ls-auto-tok-profile" class="ls-num-input" min="200" max="16000" step="100" placeholder="3000"></div>
+        <div class="ls-setup-row"><label for="ls-auto-tok-review">Лимит ответа: оценка</label><input type="number" id="ls-auto-tok-review" class="ls-num-input" min="200" max="16000" step="100" placeholder="2000"></div>
+        <div class="ls-setup-row"><label for="ls-auto-tok-history">Лимит ответа: история</label><input type="number" id="ls-auto-tok-history" class="ls-num-input" min="200" max="16000" step="100" placeholder="3000"></div>
+        <div class="ls-hint">Максимум токенов, которые модель может выдать за один запрос (рассуждения тоже считаются). Если видишь «ответ обрезан» — увеличь. Пусто — по умолчанию (в подсказке). От 200 до 16000.</div>
+        <label class="checkbox_label"><input type="checkbox" id="ls-auto-retry"><span>Повторять с удвоенным лимитом, если ответ обрезан</span></label>
       </details>
       <details class="ls-adv"><summary>Как это работает</summary>${hintsHtml}</details>
     </div>
@@ -147,6 +152,10 @@ function renderAutoCard() {
   const pf = $id('ls-auto-prefill'); if (pf) pf.checked = c.autoPrefill === true;
   const nt = $id('ls-auto-nothink'); if (nt) nt.checked = c.autoNoThink === true;
   const fs = $id('ls-auto-figspaces'); if (fs) fs.checked = c.autoFigureSpaces === true;
+  for (const [el, k] of [['ls-auto-tok-profile', 'autoTokProfile'], ['ls-auto-tok-review', 'autoTokReview'], ['ls-auto-tok-history', 'autoTokHistory']]) {
+    const n = $id(el); if (n && document.activeElement !== n) n.value = +c[k] >= 200 ? String(Math.min(16000, Math.round(+c[k]))) : '';
+  }
+  const rt = $id('ls-auto-retry'); if (rt) rt.checked = c.autoRetryTrunc !== false;
   const to = $id('ls-auto-timeout'); if (to) to.value = String([45, 90, 180, 300].includes(+c.autoTimeoutSec) ? +c.autoTimeoutSec : 90);
   const iv = $id('ls-auto-interval'); if (iv) { const n=reviewInterval(c.autoReviewInterval); if(![...iv.options].some(o=>+o.value===n))iv.add(new Option(`Раз в ${n} ответов`,String(n))); iv.value=String(n); }
   const sc = $id('ls-pace-scale');
@@ -481,6 +490,9 @@ export function bindAutoView() {
     if (id === 'ls-auto-prefill' || id === 'ls-auto-figspaces' || id === 'ls-auto-nothink') { cfg()[id === 'ls-auto-prefill' ? 'autoPrefill' : id === 'ls-auto-nothink' ? 'autoNoThink' : 'autoFigureSpaces'] = e.target.checked; saveSettingsDebounced(); return; }
     if (id === 'ls-diag-head') { cfg().autoDiagReply = e.target.checked; saveSettingsDebounced(); return; }
     if (id === 'ls-simple-view') { cfg().simpleView = e.target.checked; saveSettingsDebounced(); applyAutoClasses(); return; }
+    const tokKey = { 'ls-auto-tok-profile': 'autoTokProfile', 'ls-auto-tok-review': 'autoTokReview', 'ls-auto-tok-history': 'autoTokHistory' }[id];
+    if (tokKey) { const n = Math.round(+e.target.value); cfg()[tokKey] = n >= 200 ? Math.min(16000, n) : 0; e.target.value = cfg()[tokKey] || ''; saveSettingsDebounced(); return; }
+    if (id === 'ls-auto-retry') { cfg().autoRetryTrunc = e.target.checked; saveSettingsDebounced(); return; }
     if (id === 'ls-auto-timeout') { cfg().autoTimeoutSec = +e.target.value; saveSettingsDebounced(); return; }
     if (!['ls-wiz-profile', 'ls-ov-profile'].includes(id)) return;
     cfg().genProfileId = e.target.value; saveSettingsDebounced();

@@ -23,6 +23,24 @@ export function stripScoreTags(text) {
   return String(text || '').replace(/<!--\s*\[(?:LOVE_SCORE|RELATION_TYPE|MILESTONE|SCAR|HC_BREAKTHROUGH|NPC_SCORE|NPC_TYPE):[^\]]*\]\s*-->/gi, '').trim();
 }
 
+// Ответ обрезан по лимиту токенов? Незакрытая строка/скобка в JSON либо открытый блок размышлений без конца.
+export const TRUNCATED_MSG = 'Ответ модели обрезан по лимиту токенов (много «размышлений» или мал лимит ответа).';
+export function isTruncatedReply(raw) {
+  let t = String(raw ?? '').replace(/\u2007/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
+  if (/^\s*<(think|thinking|reasoning)>/i.test(t) && !/<\/(think|thinking|reasoning)>/i.test(t)) return true;
+  t = t.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const a = t.indexOf('{');
+  if (a < 0) return false;
+  let depth = 0, str = false, esc = false;
+  for (const c of t.slice(a)) {
+    if (str) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') str = false; continue; }
+    if (c === '"') str = true;
+    else if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') { depth--; if (depth <= 0) return false; }
+  }
+  return true;
+}
+
 // Достаёт JSON-объект из ответа модели: убирает «размышления», ```-обрамление, лишний текст вокруг и фигурные пробелы U+2007.
 export function extractJson(raw) {
   let t = String(raw ?? '').replace(/\u2007/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
@@ -30,7 +48,11 @@ export function extractJson(raw) {
   t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   try { return JSON.parse(t); } catch {}
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
-  if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(t.slice(a, b + 1)); }
+    catch (e) { if (isTruncatedReply(raw)) throw new Error(TRUNCATED_MSG); throw e; }
+  }
+  if (isTruncatedReply(raw)) throw new Error(TRUNCATED_MSG);
   throw new Error('В ответе ИИ нет JSON (ответ оборван, отказ модели или слишком долгие «размышления»)');
 }
 
