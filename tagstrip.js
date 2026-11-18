@@ -62,4 +62,3 @@ export function stripOldTagsFromPrompt(prompt, keepN, protect) {
   }
   return out + prompt.slice(pos);
 }
-

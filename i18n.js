@@ -643,4 +643,3 @@ export function observeTree(root) {
     return null;
   }
 }
-

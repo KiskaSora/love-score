@@ -231,4 +231,3 @@ Works with any OpenAI-compatible API: OpenAI, OpenRouter, LM Studio, Ollama, Kob
 ---
 
 *Made with ❤️ for SillyTavern*
-
