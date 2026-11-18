@@ -10,7 +10,7 @@ export const MIN_SCORE  = -100;
 
 // ─── Настройки по умолчанию ───────────────────────────────────────────────────
 export const defaultSettings = {
-  autoSlowBurn: true, autoSlowBurnPace: 'slow', autoReviewInterval: 15,
+  autoSlowBurn: true, autoSlowBurnPace: 'slow', autoReviewInterval: 15, autoScoreMode: 'tags',
   isEnabled: true, maxScore: 100, gradualProgression: true,
   // ── Hardcore-режим ──
   hardcoreMode: false,          // главный флаг режима
@@ -96,6 +96,7 @@ export const mkLoveData = () => ({
   // ── Hardcore runtime (per-chat) ──
   _hcStaleCounter: 0,           // ходов подряд без положительного прогресса
   _hcBreakthroughCD: 0,         // оставшийся кулдаун breakthrough
+  _autoBigCD: 0,                // авто-слоубёрн (теги): ответов до следующего крупного поворота
   _coldStarted: false,          // чат начался с «холодного старта» (стена недоверия)
   _streakCount: 0,              // подряд идущих положительных ответов
   _momentumTurns: 0,            // сколько ходов ещё держится импульс события
@@ -216,6 +217,7 @@ export function ensureLDFields(d) {
   if (!d.relationType)         d.relationType         = 'neutral';
   if (d._hcStaleCounter == null)   d._hcStaleCounter   = 0;
   if (d._hcBreakthroughCD == null) d._hcBreakthroughCD = 0;
+  if (d._autoBigCD == null)        d._autoBigCD        = 0;
   if (d._coldStarted == null)      d._coldStarted      = false;
   if (d._streakCount == null)      d._streakCount      = 0;
   if (d._momentumTurns == null)    d._momentumTurns    = 0;
@@ -267,7 +269,7 @@ export function ensureLDFields(d) {
 // (порог→done, id→healed, id→счёт NPC). Пользовательские данные — тексты событий,
 // имена/описания/аватары NPC, сами шрамы — не копируются: иначе откат свайпа
 // отменял бы правки, сделанные человеком уже после поста.
-export const SNAP_SCALARS = ['score','_coldStarted','_hcStaleCounter','_hcBreakthroughCD',
+export const SNAP_SCALARS = ['score','_coldStarted','_hcStaleCounter','_hcBreakthroughCD','_autoBigCD',
   '_streakCount','_momentumTurns','_momentumDir','relationType','_currentRoute','_lastMilestoneAiMsgIdx'];
 
 // Глубина истории снимков на чат (на сколько сообщений можно откатиться).

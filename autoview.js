@@ -4,7 +4,7 @@ import { saveSettingsDebounced } from '../../../../script.js';
 import { cfg, chatLoveData, getChatId, getNativeGroup, toast, escHtml } from './config.js';
 import { getConnectionProfiles, buildCharacterCardText, getCurrentCharacterCard, getLorebookTextForGen } from './ai.js';
 import { autoModeActive, forceAutoProfile, previewAutoReview, suggestMaxScore, getAutoReviewStatus } from './slowburn-observer.js';
-import { latestReview, reviewedRecord, redact, reviewInterval, relationshipState } from './slowburn-core.js';
+import { latestReview, reviewedRecord, redact, reviewInterval, relationshipState, stepScoreCap, tagCaps, BIG_COOLDOWN } from './slowburn-core.js';
 import { historyImportHTML, relationshipOverviewHTML, captureHistoryInput, handleHistoryAction } from './historyview.js';
 import { relationshipSettingsHTML, captureRelationshipInput, changeRelationshipSelection, handleRelationshipAction } from './relationshipview.js';
 import { autoStage, AUTO_STAGES, stagePoint } from './autostage.js';
@@ -22,16 +22,17 @@ export function autoCardHTML(c, hintsHtml = '') {
   return `<div class="ls-autocard">
     <div class="ls-autocard-top">
       <div class="ls-autocard-ic">${ico('fa-hourglass-half')}</div>
-      <div class="ls-autocard-t"><strong>Автоматический слоубёрн</strong><small>beta · ответы не переписываются и не получают тегов</small></div>
+      <div class="ls-autocard-t"><strong>Автоматический слоубёрн</strong><small>beta · ответы не переписываются; очки — скрытым тегом модели или пересмотром AI</small></div>
       <label class="ls-aswitch" title="Включить / выключить"><input id="ls-auto-slowburn" type="checkbox"${c.autoSlowBurn ? ' checked' : ''}><span></span></label>
     </div>
     <div id="ls-auto-blocked"></div>
     <div class="ls-auto-only">
       <select id="ls-auto-pace" style="display:none"><option value="slow"${c.autoSlowBurnPace !== 'very_slow' ? ' selected' : ''}>Медленный</option><option value="very_slow"${c.autoSlowBurnPace === 'very_slow' ? ' selected' : ''}>Очень медленный</option></select>
+      <div class="ls-seg" id="ls-score-seg"><button type="button" data-ls-act="scoremode" data-v="tags">Очки: тегом, каждый ответ</button><button type="button" data-ls-act="scoremode" data-v="review">Очки: пересмотром AI</button></div>
       <div class="ls-seg" id="ls-pace-seg"><button type="button" data-ls-act="pace" data-v="slow">Медленный</button><button type="button" data-ls-act="pace" data-v="very_slow">Очень медленный</button></div>
       <div id="ls-pace-scale" class="ls-pace-scale"></div>
       <div class="ls-setup-row"><label for="ls-auto-interval">Пересмотр AI</label><select id="ls-auto-interval" class="ls-num-input"><option value="10">Раз в 10 ответов</option><option value="15">Раз в 15 ответов</option><option value="20">Раз в 20 ответов</option><option value="30">Раз в 30 ответов</option><option value="50">Раз в 50 ответов</option></select></div>
-      <div class="ls-hint">Между проверками — локальное состояние и короткий инжект в основной запрос. Сообщения сами по себе не начисляют очки и не открывают близость.</div>
+      <div class="ls-hint">Короткий инжект с правилами уходит в основной запрос. Очки сами по себе не открывают близость, а число сообщений ничего не начисляет.</div>
       <div class="ls-chips" id="ls-auto-chips"></div>
       <div class="ls-statusline" id="ls-auto-statusline"></div>
       <label class="checkbox_label" style="margin-top:8px"><input type="checkbox" id="ls-simple-view"><span>Простой вид: только главное</span></label>
@@ -65,7 +66,7 @@ export function storageDangerHTML() {
     <div class="ls-hint">«Сбросить этот чат»: очки, история, профиль и память этого чата начнутся с нуля. «Удалить всё»: то же для всех чатов. Настройки расширения и пресеты остаются. Оценки внутри старых сообщений таверна хранит сама, но расширение их больше не учитывает.</div></div>`;
 }
 // ─── Диагностика во вкладке «Отладка»: отчёт без ключей, адресов и текста истории ───
-const EXT_VERSION = '1.17.0-beta.9';
+const EXT_VERSION = '1.17.0-beta.11';
 export function diagHTML() {
   return `<div class="ls-diag"><div class="ls-section-title" style="margin-top:0">Диагностика</div>
     <div class="ls-hint">Отчёт собирает настройки, состояние чата и журнал запросов. В нём нет ключей, адресов, текста истории и карточки персонажа. Перед отправкой его можно прочитать ниже.</div>
@@ -140,6 +141,8 @@ export function applyAutoClasses() {
 function renderAutoCard() {
   const c = cfg(), d = chatLoveData(), pace = c.autoSlowBurnPace === 'very_slow' ? 'very_slow' : 'slow';
   document.querySelectorAll('#ls-pace-seg button').forEach(b => b.classList.toggle('on', b.dataset.v === pace));
+  const tagsMode = c.autoScoreMode !== 'review';
+  document.querySelectorAll('#ls-score-seg button').forEach(b => b.classList.toggle('on', b.dataset.v === (tagsMode ? 'tags' : 'review')));
   const sv = $id('ls-simple-view'); if (sv) sv.checked = !!c.simpleView;
   const bl = $id('ls-auto-blocked');
   if (bl) {
@@ -160,9 +163,19 @@ function renderAutoCard() {
   const iv = $id('ls-auto-interval'); if (iv) { const n=reviewInterval(c.autoReviewInterval); if(![...iv.options].some(o=>+o.value===n))iv.add(new Option(`Раз в ${n} ответов`,String(n))); iv.value=String(n); }
   const sc = $id('ls-pace-scale');
   if (sc) {
-    const row = (v, label, cap) => `<div class="ls-pace-row${v === pace ? ' on' : ''}"><span>${label}</span><div class="ls-pace-track"><i style="width:${cap * 5}%"></i></div><b>до +${cap}</b></div>`;
-    sc.innerHTML = row('slow', 'Медленный', 2) + row('very_slow', 'Очень медленный', 1)
-      + `<div class="ls-hint">За один редкий пересмотр — до +${pace === 'very_slow' ? 1 : 2}, часто 0. Сюжетный прорыв — до +10. Доверие и готовность к прикосновениям независимы.</div>`;
+    const iv0 = reviewInterval(c.autoReviewInterval), mx = d.maxScore || 100;
+    if (tagsMode) {
+      const capOf = p => tagCaps(p, mx).cap, top = capOf('slow'), big = tagCaps(pace, mx).big;
+      const row = (v, label) => `<div class="ls-pace-row${v === pace ? ' on' : ''}"><span>${label}</span><div class="ls-pace-track"><i style="width:${Math.round(capOf(v) / top * 100)}%"></i></div><b>до +${capOf(v)}</b></div>`;
+      sc.innerHTML = row('slow', 'Медленный') + row('very_slow', 'Очень медленный')
+        + `<div class="ls-hint">Модель ставит скрытый тег очков после каждого ответа по правилам из инжекта: за ответ до +${capOf(pace)}, чаще 0 или меньше. Редкий поворот — до +${big} не чаще раза в ${BIG_COOLDOWN} ответов, падение до −${big}. Больше расширение не засчитает. Пересмотр AI раз в ${iv0} ответов обновляет только память, границы и шкалы, очки не меняет.</div>`;
+    } else {
+      const capOf = (p, b) => stepScoreCap(p, iv0, mx, b), top = capOf('slow', false);
+      const row = (v, label) => `<div class="ls-pace-row${v === pace ? ' on' : ''}"><span>${label}</span><div class="ls-pace-track"><i style="width:${Math.round(capOf(v, false) / top * 100)}%"></i></div><b>до +${capOf(v, false)}</b></div>`;
+      const fast = Math.ceil(mx / capOf(pace, false)) * iv0;
+      sc.innerHTML = row('slow', 'Медленный') + row('very_slow', 'Очень медленный')
+        + `<div class="ls-hint">Очки двигаются вслед за шкалами чувств, доверия и готовности только при пересмотре: за пересмотр — до +${capOf(pace, false)}, часто меньше или 0. Прорыв — до +${capOf(pace, true)}. При самом быстром росте максимум (${mx}) достигается примерно за ${fast} ответов, обычно дольше.</div>`;
+    }
   }
   const ch = $id('ls-auto-chips'); if (!ch) return;
   const prof = getConnectionProfiles().find(p => p.id === c.genProfileId), u = d._autoUsage;
@@ -404,7 +417,9 @@ function onClick(e) {
   if (act === 'inject-copy') { const text=getCurrentInjection()?.text; if(text)copyText(text).then(ok=>toast(ok?'success':'warning',ok?'Инжект скопирован':'Не удалось скопировать')); return; }
   if (act.startsWith('relation-')) { handleRelationshipAction(act); return; }
   if (act.startsWith('history-')) { handleHistoryAction(act); return; }
-  if (act === 'pace') {
+  if (act === 'scoremode') {
+    c.autoScoreMode = b.dataset.v === 'review' ? 'review' : 'tags'; saveSettingsDebounced(); updatePromptInjection(); renderAutoCard(); autoviewSync();
+  } else if (act === 'pace') {
     const sel = $id('ls-auto-pace'); if (sel) { sel.value = b.dataset.v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     renderAutoCard();
   } else if (act === 'reveal-manual') { _reveal = !_reveal; applyAutoClasses(); }

@@ -3,8 +3,8 @@ import { cfg, chatLoveData, loveData, RELATION_TYPES, MIN_SCORE, PROMPT_KEY, toa
 import { refreshWidget, pulseWidget, flipWidget } from './heart.js';
 import { stripOldTagsFromMessages, stripOldTagsFromPrompt, LS_TAG_RE } from './tagstrip.js';
 
-import { autoModeActive, buildAutoPrompt, reviewAutoMessage } from './slowburn-observer.js';
-import { reviewedRecord, branchRecord } from './slowburn-core.js';
+import { autoModeActive, autoTagScoring, buildAutoPrompt, reviewAutoMessage } from './slowburn-observer.js';
+import { reviewedRecord, branchRecord, tagStep } from './slowburn-core.js';
 import { relationshipGuidance, initialColdStart } from './relationship-model.js';
 
 // ─── Построение промпта ───────────────────────────────────────────────────────
@@ -288,7 +288,31 @@ function routeTagsToNpc(text, npc) {
     .replace(/<!--\s*\[RELATION_TYPE:(\w+)\]\s*-->/gi, (_, k) => '<!-- [NPC_TYPE:'+nm+':'+k+'] -->');
 }
 
+// Авто-слоубёрн, очки тегом модели: тег ставится после каждого ответа, значение режется потолком.
+// Записи пересмотра (из режима «по пересмотру») в старых чатах по-прежнему учитываются.
+function applyTagScore(d, c, text, S, msg) {
+  const clampS = v => roundScore(Math.max(MIN_SCORE, Math.min(d.maxScore, v)));
+  const rec = msg ? branchRecord(getChat(), getChat().indexOf(msg)) : null;
+  if (rec && rec.delta) {
+    const b0 = d.score; d.score = clampS(b0 + rec.delta);
+    if (d.score !== b0) { addToLog(d, roundScore(d.score - b0), rec.reason); S.pulse(); }
+  }
+  const st = tagStep({ text, score: d.score, pace: c.autoSlowBurnPace, maxScore: d.maxScore, bigCD: d._autoBigCD });
+  d._autoBigCD = st.bigCD;
+  if (st.delta !== 0) {
+    const ov = d.score; d.score = clampS(ov + st.delta);
+    if (d._coldStarted && d.score >= 0) d._coldStarted = false;
+    const dl = roundScore(d.score - ov);
+    if (dl !== 0) {
+      addToLog(d, dl, st.reason || (st.clamped ? 'ограничено потолком' : ''));
+      if ((ov >= 0 && d.score < 0) || (ov < 0 && d.score >= 0)) S.flip(); else S.pulse();
+    }
+  }
+  S.refresh(); S.syncUI(); S.renderScoreLog();
+}
+
 function applyScoring(d, c, text, S, aiIndex, msg) {
+  if (autoTagScoring()) { applyTagScore(d, c, text, S, msg); return; }
   if (msg?.extra?.lsAutoUnverified === msg?.mes) return;
   const reviewed = msg ? branchRecord(getChat(), getChat().indexOf(msg)) : null;
   if (reviewed) {
@@ -552,7 +576,7 @@ function recomputeFromChat(d, c) {
 
   // В чате нет ни одного тега — счёт ведут вручную (или теги стёрли при
   // редактировании). Обнулять нечего: сохраняем состояние, чиним только индексы.
-  if (!aiMsgs.some(m => { const r=branchRecord(chat,chat.indexOf(m)); return (r&&!r.local)||(!autoModeActive()&&ANY_LS_TAG.test(m.mes||'')); })) { reindexSnapshots(d, chat); return false; }
+  if (!aiMsgs.some(m => { const r=branchRecord(chat,chat.indexOf(m)); return (r&&!r.local)||((!autoModeActive()||autoTagScoring())&&ANY_LS_TAG.test(m.mes||'')); })) { reindexSnapshots(d, chat); return false; }
 
   // Что пересчёт восстановить не сможет — забираем до сброса.
   const manual    = manualScoreOffset(d);
@@ -574,7 +598,7 @@ function recomputeFromChat(d, c) {
   d.score = coldBase ? roundScore(Math.max(MIN_SCORE, Math.min(0, c.coldStartScore ?? -30))) : 0;
   d._coldStarted = coldBase;
   d.scoreLog = [];
-  d._hcStaleCounter = 0; d._hcBreakthroughCD = 0;
+  d._hcStaleCounter = 0; d._hcBreakthroughCD = 0; d._autoBigCD = 0;
   d._streakCount = 0; d._momentumTurns = 0; d._momentumDir = 0;
   d.relationType = 'neutral'; d._currentRoute = null;
   d.scars = [];
@@ -660,7 +684,7 @@ export async function onMessageReceived(syncUI, renderScoreLog, renderMilestones
     const chat = typeof SillyTavern?.getContext === 'function' ? SillyTavern.getContext().chat : window.chat;
     if (!chat?.length) return;
     const msg = chat[chat.length-1]; if (!msg || msg.is_user) return;
-    const restored = autoModeActive() ? false : restoreTagsFromStream(msg);
+    const restored = (autoModeActive() && !autoTagScoring()) ? false : restoreTagsFromStream(msg);
     let text = msg.mes || '';
     const d = chatLoveData();
     const c = cfg();
@@ -690,6 +714,14 @@ export async function onMessageReceived(syncUI, renderScoreLog, renderMilestones
       if (stack.length > SNAP_CAP) stack.splice(0, stack.length - SNAP_CAP);
     }
 
+    const liveS = {
+      toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
+      syncUI, renderScoreLog, renderMilestones, renderGroupNpcs,
+    };
+    // Режим тегов: сердечко двигается сразу, не дожидаясь пересмотра AI (он идёт после и очки не трогает).
+    const tagMode = autoTagScoring();
+    if (tagMode) applyScoring(d, c, text, liveS, getAiMsgCount(), msg);
+
     if (autoModeActive()) {
       if (!await reviewAutoMessage(msg, d.score, {force:type === 'ls-force-review'})) { saveSettingsDebounced(); updatePromptInjection(); return; }
       if (SillyTavern.getContext().chat !== chat || chat[chat.length-1] !== msg || chatLoveData() !== d) return;
@@ -699,14 +731,11 @@ export async function onMessageReceived(syncUI, renderScoreLog, renderMilestones
     }
 
     // Применить теги поста к состоянию — с живыми сайд-эффектами (тосты, сердце, UI).
-    applyScoring(d, c, text, {
-      toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
-      syncUI, renderScoreLog, renderMilestones, renderGroupNpcs,
-    }, getAiMsgCount(), msg);
+    if (!tagMode) applyScoring(d, c, text, liveS, getAiMsgCount(), msg);
 
     // Модель не вписала тег счёта вообще — раньше это молча проходило мимо,
     // и юзер не понимал, почему очки не сдвинулись. Явно сигналим об этом.
-    if (!LOVE_SCORE_TAG.test(text) && !reviewedRecord(msg) && !autoModeActive()) {
+    if (!LOVE_SCORE_TAG.test(text) && (autoTagScoring() || (!reviewedRecord(msg) && !autoModeActive()))) {
       toast('warning', 'В ответе нет тега счёта — Love Score не обновился в этом посте.');
     }
 
@@ -759,7 +788,7 @@ export function onMessageSwiped(mesId, ui) {
         toast, pulse: pulseWidget, flip: flipWidget, refresh: refreshWidget,
         syncUI(){}, renderScoreLog(){}, renderMilestones(){}, renderGroupNpcs(){},
       }, getChat().slice(0, idx + 1).filter(m => m && !m.is_user).length, msg);
-      if (!LOVE_SCORE_TAG.test(msg.mes || '') && !reviewedRecord(msg) && !autoModeActive()) {
+      if (!LOVE_SCORE_TAG.test(msg.mes || '') && (autoTagScoring() || (!reviewedRecord(msg) && !autoModeActive()))) {
         toast('warning', 'В этом варианте свайпа нет тега счёта — Love Score не обновился.');
       }
     }

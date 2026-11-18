@@ -11,7 +11,7 @@ player's actions and prior established events. Repeated pressure is not a shortc
 Ordinary progress is small, often zero. Positive delta NEVER means deeper hatred, coercion or fixation.
 Chosen relationship type and emotional states must stay distinct from trust and physical readiness.
 For enemies, improvement may only mean restraint or a truce; never require romance as the destination.
-Rare meaningful choices that touch this character's core can earn a breakthrough up to +10.
+Rare meaningful choices that touch this character's core can earn a larger breakthrough step.
 Mere shock, flattery or expensive gifts are not sufficient.
 A breakthrough changes something specific, not every boundary. Do not reward the same past event again;
 remember already rewarded turning points. Preserve earned closeness after conflict.
@@ -56,7 +56,7 @@ export function extractJson(raw) {
   throw new Error('В ответе ИИ нет JSON (ответ оборван, отказ модели или слишком долгие «размышления»)');
 }
 
-export function parseReview(raw, pace = 'slow', source = '') {
+export function parseReview(raw, pace = 'slow', source = '', scale = {}) {
   const value = extractJson(raw);
   if (!value || !Number.isFinite(value.delta) || typeof value.breakthrough !== 'boolean'
     || typeof value.reason !== 'string' || !value.reason.trim() || typeof value.memory !== 'string'
@@ -65,11 +65,11 @@ export function parseReview(raw, pace = 'slow', source = '') {
   const normalize = s => s.replace(/\s+/g,' ').trim();
   const evidence=normalize(value.evidence);
   const breakthrough=value.breakthrough && evidence.length>=12 && normalize(source).includes(evidence);
-  const cap=breakthrough?10:(pace==='very_slow'?1:2);
+  const cap=stepScoreCap(pace,scale.interval,scale.maxScore,breakthrough),capDown=stepScoreCap(pace,scale.interval,scale.maxScore,true);
   const meters={};
   if(value.meters&&typeof value.meters==='object')for(const k of ['feelings','trust','readiness']){const n=Number(value.meters[k]);if(value.meters[k]!==null&&value.meters[k]!==''&&Number.isFinite(n))meters[k]=Math.round(Math.max(0,Math.min(10,n))*10)/10;}
   const next=typeof value.next==='string'?normalize(value.next).slice(0,200):'';
-  return {...value,breakthrough,evidence:breakthrough?evidence:'',delta:Math.round(Math.max(-10,Math.min(cap,value.delta))*10)/10,
+  return {...value,breakthrough,evidence:breakthrough?evidence:'',delta:Math.round(Math.max(-capDown,Math.min(cap,value.delta))*10)/10,
     reason:value.reason.replace(/[\[\]\r\n:]/g,' ').slice(0,100),memory:value.memory.trim(),
     meters:Object.keys(meters).length?meters:undefined,next,
     summary:typeof value.summary==='string'?normalize(value.summary).slice(0,240):'',
@@ -98,6 +98,83 @@ export function branchRecord(chat, idx) {
   return r && (!r.contextKey || r.contextKey === branchKey(chat, idx)) ? r : null;
 }
 export const reviewInterval = value => Math.max(5, Math.min(100, Math.round(Number(value) || 15)));
+// ── Очки следуют за шкалами ──────────────────────────────────────────────────
+// Очки больше не копятся «+1 за пересмотр»: они двигаются на столько, на сколько ИИ сдвинул шкалы
+// чувств/доверия/готовности (0–10) относительно прошлого пересмотра, в масштабе максимума очков.
+// Темп = на сколько можно сдвинуть шкалу за один пересмотр; он привязан к интервалу, поэтому
+// «время до максимума» не зависит от того, как часто идут пересмотры.
+export const METER_WEIGHTS = { feelings: 0.4, trust: 0.4, readiness: 0.2 };
+export const meterStep = (pace = 'slow', interval = 15) =>
+  Math.round(Math.min(2, Math.max(0.2, (pace === 'very_slow' ? 0.3 : 0.6) * reviewInterval(interval) / 15)) * 100) / 100;
+export const stepScoreCap = (pace = 'slow', interval = 15, maxScore = 100, breakthrough = false) =>
+  Math.round(meterStep(pace, interval) * (breakthrough ? 2 : 1) / 10 * Math.max(1, Number(maxScore) || 100) * 10) / 10;
+export function scoreStep({ prev = {}, next, modelDelta = 0, pace = 'slow', interval = 15, maxScore = 100, breakthrough = false } = {}) {
+  const step = meterStep(pace, interval) * (breakthrough ? 2 : 1), max = Math.max(1, Number(maxScore) || 100);
+  const cap = Math.round(step / 10 * max * 10) / 10, r1 = v => Math.round(v * 10) / 10;
+  const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const md = Number.isFinite(modelDelta) ? modelDelta : 0;
+  const meters = next && typeof next === 'object' ? { ...next } : undefined;
+  let sum = 0, w = 0;
+  if (meters) for (const k of Object.keys(METER_WEIGHTS)) {
+    const p = prev?.[k];
+    if (typeof meters[k] !== 'number' || !Number.isFinite(meters[k])) continue;
+    if (typeof p === 'number' && Number.isFinite(p)) {
+      meters[k] = r1(clampTo(meters[k], Math.max(0, p - step), Math.min(10, p + step)));
+      sum += METER_WEIGHTS[k] * (meters[k] - p); w += METER_WEIGHTS[k];
+    }
+  }
+  let delta;
+  const fromMeters = w > 0;
+  if (fromMeters) {
+    delta = r1(sum / w / 10 * max);
+    if (md < 0) delta = Math.min(delta, r1(clampTo(md, -cap, 0))); // откат/ссора, которой нет в шкалах
+  } else delta = r1(clampTo(md, -cap, cap)); // нет прошлых шкал для сравнения — осторожный запасной путь
+  return { delta, meters: meters && Object.keys(meters).length ? meters : undefined, fromMeters, cap };
+}
+// ── Режим «очки тегом модели» (как в обычном режиме, но с логичными правилами) ──
+// Основная модель сама ставит тег после КАЖДОГО ответа; расширение режет значение потолком.
+// Потолок за ответ: 0,5% шкалы (медленный) или 0,25% (очень медленный); крупный поворот — втрое
+// больше, не чаще раза в BIG_COOLDOWN ответов. Падение можно до крупного потолка сразу.
+export const BIG_COOLDOWN = 15;
+export function tagCaps(pace = 'slow', maxScore = 100) {
+  const max = Math.max(1, Number(maxScore) || 100), r = v => Math.round(v * 10) / 10;
+  const cap = Math.max(0.1, r(max * (pace === 'very_slow' ? 0.0025 : 0.005)));
+  return { cap, big: r(cap * 3) };
+}
+// Достаёт тег [LOVE_SCORE:X:причина] из текста ответа. Со знаком (+/-) — это изменение,
+// без знака — старый формат «новый итог»; «0» всегда означает «без изменения».
+export function parseScoreTag(text, score = 0) {
+  const m = String(text || '').match(/<!--\s*\[LOVE_SCORE:\s*([+-]?\d+(?:[.,]\d+)?)\s*(?::([^\]]*))?\]\s*-->/i);
+  if (!m) return null;
+  const raw = m[1].replace(',', '.'), n = parseFloat(raw);
+  if (!Number.isFinite(n)) return null;
+  const signed = raw[0] === '+' || raw[0] === '-';
+  const delta = n === 0 ? 0 : signed ? n : n - score;
+  return { delta, signed, reason: (m[2] || '').replace(/\s+/g, ' ').trim().slice(0, 60) };
+}
+// Что реально записать за ответ: потолки, кулдаун крупного поворота. Чистая функция — пересчёт
+// чата после удаления сообщений даёт тот же счёт, что и живое накопление.
+export function tagStep({ text, score = 0, pace = 'slow', maxScore = 100, bigCD = 0 } = {}) {
+  const tag = parseScoreTag(text, score), { cap, big } = tagCaps(pace, maxScore), r = v => Math.round(v * 10) / 10;
+  const nextCD = Math.max(0, (bigCD || 0) - 1);
+  if (!tag) return { delta: 0, reason: '', hasTag: false, bigCD: nextCD, cap, big };
+  const up = (bigCD > 0 || !tag.signed) ? cap : big; // число без знака — неоднозначный формат, поворотом не считается
+  const delta = r(Math.max(-big, Math.min(up, tag.delta)));
+  return { delta, reason: tag.reason, hasTag: true, bigCD: delta > cap ? BIG_COOLDOWN : nextCD, cap, big, clamped: delta !== r(tag.delta) };
+}
+export function tagRules(score, maxScore, pace = 'slow') {
+  const { cap, big } = tagCaps(pace, maxScore), typ = Math.max(0.1, Math.round(cap * 0.3 * 10) / 10);
+  return `[SCORING — hidden bookkeeping, not part of the story. Score now ${score} / ${maxScore}.
+After your reply append on the very last line exactly one tag: <!-- [LOVE_SCORE:+X:reason] -->
+X = signed CHANGE for THIS reply only (examples: +${typ}, -1, 0), never the new total. 0 is the normal answer; omit ":reason" when 0.
+reason = 2-6 words in the story language naming what the player did.
+Decide it logically from what happened in the story, not from message count or time:
+- Award only what the PLAYER earned this turn by a concrete action or choice that matters to THIS character (card, boundaries, history): fitting care, a kept promise, respecting a boundary, honest vulnerability, a real sacrifice. Typical +${typ}; a clearly meaningful moment up to +${cap}; one rare turning point up to +${big}, not more often than every ${BIG_COOLDOWN} replies.
+- 0 for small talk, routine scenes, an attempt the character did not return, anything the assistant invented, an event already rewarded, flattery, gifts, shock or repeated pressure.
+- Negative (down to -${big}) for pressure, boundary violations, betrayal, cruelty or ignoring what the character said they need. After a conflict lower earned closeness, do not reset it.
+- Positive always means improved regard or less antagonism (for enemies: restraint, a truce), never deeper hatred or fixation. The number never unlocks touch, kisses or commitment: the character, the scene and the boundaries above decide that.
+- Be honest: if the player earned nothing, write 0. Do not inflate to please the player.]`;
+}
 export const characterReply = m => !!m && !m.is_user && !m.is_system && typeof m.mes === 'string' && !!m.mes.trim();
 
 // Derived from selected chat messages, not an incrementing counter: duplicate events,
@@ -177,7 +254,7 @@ export function importState(value) {
   return state;
 }
 
-export function autoPrompt(score,maxScore,memory,pace,profile='',state={}) {
+export function autoPrompt(score,maxScore,memory,pace,profile='',state={},rules='') {
  const short=(v,n)=>String(v||'').replace(/\s+/g,' ').trim().slice(0,n);
  // Prefer defenses over biography when condensing the cached guide. The full card
  // remains in the main prompt; the tracker need not resend it on every turn.
@@ -190,7 +267,7 @@ ${short(guide||profile,330)}
 State: ${short(memory,320)||'Infer from card/history; do not presume reciprocation.'}
 Allowed now (authoritative over a conflicting summary): ${short(state.allowed,180)||'Only closeness already established in history; small in-character initiatives.'}
 Barrier: ${short(state.barrier,180)||'Do not skip the card’s defenses or treat attraction as trust.'}
-Develop the scene within these limits; an offered hand does not unlock a kiss. No bookkeeping or score tags.]`;
+Develop the scene within these limits; an offered hand does not unlock a kiss.${rules?']\n'+rules:' No bookkeeping or score tags.]'}`;
 }
 
 // Убирает из текста всё, что похоже на секреты и адреса: ключи, токены, Bearer, URL, почту, IP.
