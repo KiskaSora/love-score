@@ -134,3 +134,4 @@ export function applyCharProfileToCurrentChat() {
   toast('success', 'Профиль применён к этому чату');
   return true;
 }
+

@@ -7,6 +7,8 @@ import { updatePromptInjection, onMessageReceived, onMessageDeleted, onSwipeGene
 import { renderGroupNpcs, showAutoRegenStatus, autoRegenAll } from './ai.js';
 import { renderScoreLog, renderMilestones } from './ui.js';
 import { tr } from './i18n.js';
+import { invalidateAutoReview, prepareAutoProfile, prepareAutoPromptContext } from './slowburn-observer.js';
+import { injectAutoStyles } from './autoview.js';
 
 // Зарегистрировать пункт в wand-меню (значок 🪄 над полем ввода)
 function registerWandMenuItem() {
@@ -28,6 +30,7 @@ function registerWandMenuItem() {
 // ─── Инициализация ────────────────────────────────────────────────────────────
 jQuery(() => {
   try {
+    if (extension_settings[EXT_NAME] && extension_settings[EXT_NAME].autoSlowBurn === undefined) extension_settings[EXT_NAME].autoSlowBurn = false;
     if (!extension_settings[EXT_NAME]) extension_settings[EXT_NAME] = structuredClone(defaultSettings);
     const c = cfg();
     const _savedEnabled = c.isEnabled;
@@ -60,6 +63,11 @@ jQuery(() => {
     } catch {}
 
     injectStyles();
+    injectAutoStyles();
+    // Кнопка «Повторить оценку» из интерфейса: тот же путь, что и для нового ответа (снимок + оценка + очки)
+    document.addEventListener('ls-auto-retry', () => {
+      onMessageReceived(syncUI, renderScoreLog, renderMilestones, renderGroupNpcs, showAutoRegenStatus, () => autoRegenAll(syncUI), 'ls-force-review');
+    });
     createWidget(openLoveScorePanel);
     updatePromptInjection();
 
@@ -70,6 +78,14 @@ jQuery(() => {
       try { if (event_types.APP_READY) eventSource.on(event_types.APP_READY, registerWandMenuItem); } catch {}
     }
 
+    for (const ev of [event_types.GENERATION_STARTED, event_types.CHAT_CHANGED, event_types.MESSAGE_DELETED, event_types.MESSAGE_SWIPED, event_types.MESSAGE_SENT]) {
+      if (ev) eventSource.on(ev, invalidateAutoReview);
+    }
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, async (type, opts, dryRun) => {
+      prepareAutoPromptContext(type, opts, dryRun);
+      await prepareAutoProfile(type, opts, dryRun);
+      saveSettingsDebounced(); updatePromptInjection();
+    });
     eventSource.on(event_types.MESSAGE_SENT, () => updatePromptInjection());
     eventSource.on(event_types.MESSAGE_RECEIVED, (_msgId, type) =>
       onMessageReceived(syncUI, renderScoreLog, renderMilestones, renderGroupNpcs, showAutoRegenStatus, () => autoRegenAll(syncUI), type)
@@ -120,3 +136,4 @@ jQuery(() => {
     try { if (typeof toastr !== 'undefined') toastr.error?.('Love Score: ошибка инициализации — ' + e.message, 'Love Score'); } catch {}
   }
 });
+
