@@ -60,15 +60,56 @@ export function getSelectedProfile() {
 export function isApiConfigured() { return !!getSelectedProfile(); }
 export function apiConfigError() { return getSelectedProfile() ? '' : 'Выбери профиль подключения'; }
 
-async function callLLM({ system, user, temperature = 0.7, maxTokens = 1000 }) {
+const FIGURE_RULE = 'Use FIGURE SPACE (U+2007) between words inside the string values only. Keep JSON keys, separators, numbers and structure unchanged.';
+const PREAMBLES = ['Sure.', 'Sure,', 'Okay.', 'Okay,', 'Understood.', 'Understood,', 'Here is the result:', "Here's the result:", 'Here is the output:', "Here's the output:", 'The result is:', 'Конечно.', 'Хорошо.', 'Вот результат:'];
+const _noPrefill = new Set();   // профили, которые не принимают финальное сообщение ассистента
+function rootMsg(e) { let cur = e, m = '', n = 0; while (cur && n++ < 6) { m = String(cur?.message || cur) || m; cur = cur?.cause; } return m; }
+function stripPreamble(t) {
+  let out = String(t || '').trimStart(), ch = true;
+  while (ch) { ch = false; for (const p of PREAMBLES) if (out.toLowerCase().startsWith(p.toLowerCase())) { out = out.slice(p.length).trimStart(); ch = true; } }
+  return out;
+}
+// prefill: начало ответа (последнее сообщение ассистента); figureSpaces: просить U+2007 между словами;
+// noThink: просить не рассуждать (подсказка в промпте + reasoning_effort «min», который таверна переводит под провайдера).
+// Возвращает всегда полный текст (prefill + продолжение). Если провайдер отвергает префилл или reasoning_effort,
+// запрос повторяется без него, и для этого профиля параметр больше не шлётся.
+const _noEffort = new Set();
+const NO_THINK_RULE = 'Do not use extended reasoning. Answer immediately with the JSON object only.';
+export async function callLLM({ system, user, temperature = 0.7, maxTokens = 1000, includePreset = true, prefill = '', figureSpaces = false, noThink = false }) {
   const err = apiConfigError(); if (err) throw new Error(err);
   const svc = SillyTavern?.getContext?.()?.ConnectionManagerRequestService;
   if (!svc?.sendRequest) throw new Error('Connection Manager недоступен — включи расширение Connection Manager или обнови таверну');
-  const messages = [{ role:'system', content:system }, { role:'user', content:user }];
-  const res = await svc.sendRequest(getSelectedProfile().id, messages, maxTokens, { stream:false, extractData:true, includePreset:true, includeInstruct:false }, { temperature });
-  const text = typeof res === 'string' ? res : (res?.content ?? '');
+  const id = getSelectedProfile().id;
+  const sys = system + (figureSpaces ? '\n\n' + FIGURE_RULE : '') + (noThink ? '\n\n' + NO_THINK_RULE : '');
+  let usePf = !!prefill && !_noPrefill.has(id), useEff = !!noThink && !_noEffort.has(id);
+  const send = async () => {
+    const messages = [{ role:'system', content:sys }, { role:'user', content:user }];
+    if (usePf) messages.push({ role:'assistant', content:prefill });
+    const payload = { temperature }; if (useEff) payload.reasoning_effort = 'min';
+    const res = await svc.sendRequest(id, messages, maxTokens, { stream:false, extractData:true, includePreset, includeInstruct:false }, payload);
+    return typeof res === 'string' ? res : (res?.content ?? '');
+  };
+  const BLOCK = /(prohibited|moderation|safety|policy|blocked|content filter)/i;
+  let text, sentWithPf = usePf, tries = 0;
+  for (let attempt = 0; ; attempt++) {  tries = attempt;
+    sentWithPf = usePf;
+    try { text = await send(); break; }
+    catch (e) {
+      const root = rootMsg(e);
+      if (attempt >= 2 || BLOCK.test(root)) throw e;
+      if (usePf && /(assistant|message|messages|role|alternat|last\s+message|prefill|conversation|model\s+turn|ending with a model|turn are not supported)/i.test(root)) { _noPrefill.add(id); usePf = false; continue; }
+      if (useEff && /(reasoning|thinking|effort|unsupported|unrecognized|unknown|invalid)/i.test(root)) { _noEffort.add(id); useEff = false; continue; }
+      throw e;
+    }
+  }
+  globalThis.__lsLastCall = { prefill: sentWithPf, effort: useEff, retries: tries };   // для диагностики
   if (!String(text).trim()) throw new Error('ИИ вернул пустой ответ');
-  return String(text);
+  text = String(text);
+  if (sentWithPf) {
+    text = stripPreamble(text);
+    if (!/^\s*[\[{]/.test(text)) text = prefill.trim() + text;   // модель продолжила — склеиваем; ответила целиком — оставляем
+  }
+  return text;
 }
 
 export function getScopeFromUI() {
@@ -839,3 +880,4 @@ export function scanChatForNpcs() {
     if (!box.querySelector('.ls-scan-add-btn')) { box.innerHTML='<i class="fa-solid fa-check" style="margin-right:5px;color:#6ee86e;"></i>Все найденные персонажи добавлены!'; }
   });
 }
+
